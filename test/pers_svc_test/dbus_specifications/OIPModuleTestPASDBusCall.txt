@@ -1,0 +1,3 @@
+dbus-send --system --dest=org.genivi.persistence.admintestframework --print-reply \
+--type=method_call /org/genivi/persistence/admintestframework \
+org.genivi.persistence.admintestframework.ExecuteTestCases

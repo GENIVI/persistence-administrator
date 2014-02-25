@@ -1,0 +1,11 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: libperscommon
+Description: library to access the persistence administration service
+Version: @VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lpers_admin_access_lib
+Libs.private: @LIBS@

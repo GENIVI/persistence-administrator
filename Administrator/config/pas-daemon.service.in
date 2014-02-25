@@ -1,0 +1,19 @@
+#  Starts the GENIVI PAS (Persistence Administration Service) as a daemon using systemd
+
+[Unit]
+Description=Persistence Administration Service
+Requires=dbus-public-bus.service
+After=dbus-public-bus.service
+
+[Service]
+Type=forking
+PIDFile=/tmp/pers_admin_svc.pid
+ExecStart=/usr/bin/pers_admin_svc
+WatchdogSec=60
+Restart=always
+StartLimitInterval=10
+StartLimitBurst=3
+StartLimitAction=reboot
+
+[Install]
+WantedBy=oip-cpi-mandatory.target
