@@ -77,3 +77,12 @@ pers_admin_test_framework_SOURCES = \
                             src/test_pas_restore_default_User1.c                                 \
                             src/test_pas_restore_default_User2App1.c                             \
                             src/test_pas_restore_default_User2Seat1.c
+
+generated/PasModuleTestGen.c: dbus_specifications/OIPModuleTestPASCodeGeneration.xml
+	mkdir -p generated
+	gdbus-codegen --interface-prefix="org.genivi.persistence." --c-namespace="OipPersistence" --generate-c-code="generated/PasModuleTestGen" dbus_specifications/OIPModuleTestPASCodeGeneration.xml
+
+
+# Delete all generated files on 'make clean'
+CLEANFILES    =  generated/PasModuleTestGen.c          \
+                 generated/PasModuleTestGen.h          
