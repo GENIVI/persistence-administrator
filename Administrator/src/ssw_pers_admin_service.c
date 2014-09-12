@@ -11,6 +11,7 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
+* 2014.09.11 uidu0250			OvipRbt#8870: Fixed timeout calculation in WDOG retriggering mechanism.
 * 2013.10.07 uidu0250			CSP_WZ#5965:  Fixed timeout calculation for mq_timedreceive
 * 2013.09.23 uidl9757           CSP_WZ#5781:  Watchdog timeout of pas-daemon
 * 2013.09.17 uidu0250			CSP_WZ#5633:  Ignore requests received before registration to NSM
@@ -510,7 +511,7 @@ static void * persadmin_AccessLibThread(void *arg)
 				}
 
         		/* determine access lib timeout moment in time */
-        		tsTimestamp.tv_sec += (__time_t)((PAS_ACCESS_LIB_REQ_QUEUE_TIMEOUT / ONE_SEC_IN_US) + ( (uint64_t)timestamp.tv_usec + (PAS_ACCESS_LIB_REQ_QUEUE_TIMEOUT % ONE_SEC_IN_US))/ONE_SEC_IN_US );
+        		tsTimestamp.tv_sec  = timestamp.tv_sec + (__time_t)((PAS_ACCESS_LIB_REQ_QUEUE_TIMEOUT / ONE_SEC_IN_US) + ( (uint64_t)timestamp.tv_usec + (PAS_ACCESS_LIB_REQ_QUEUE_TIMEOUT % ONE_SEC_IN_US))/ONE_SEC_IN_US );
         		tsTimestamp.tv_nsec = (((uint64_t)timestamp.tv_usec + (PAS_ACCESS_LIB_REQ_QUEUE_TIMEOUT % ONE_SEC_IN_US)) % ONE_SEC_IN_US) * 1000;
 
 
