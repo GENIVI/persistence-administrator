@@ -18,13 +18,13 @@ dnl **************************************************************************
 dnl *** First, define all of the version numbers up front                  ***
 dnl *** In particular, this allows the version macro to be used in AC_INIT ***
 dnl **************************************************************************
-m4_define([PERS_SERVICE_VERSION_S],[1.0.3])
-m4_define([PERS_SERVICE_VERSION_N],[1000003])
+m4_define([PERS_PACKAGE_VERSION_S],[1.0.4])
+m4_define([PERS_ADMINACCESSLIB_VERSION_N],[1000000])
 
 dnl ***************************
 dnl *** Initialize autoconf ***
 dnl ***************************
-AC_INIT([persistence-administration-service],[PERS_SERVICE_VERSION_S])
+AC_INIT([persistence-administration-service],[PERS_PACKAGE_VERSION_S])
 AC_COPYRIGHT([Copyright (c) 2012 Continental Automotive GmbH])
 AC_PREREQ([2.50])
 
@@ -38,11 +38,11 @@ AC_SUBST([ACLOCAL_AMFLAGS], ["$ACLOCAL_FLAGS -I m4"])
 dnl *********************************
 dnl *** Shared library versioning ***
 dnl *********************************
-PERSADMINACCESS_MAJOR=$((((PERS_SERVICE_VERSION_N() / 1000) / 1000) % 1000 ))
-PERSADMINACCESS_MINOR=$(( (PERS_SERVICE_VERSION_N() / 1000) % 1000 ))
-PERSADMINACCESS_MICRO=$((  PERS_SERVICE_VERSION_N() % 1000 ))
-GENERIC_LIBRARY_VERSION=$PERSADMINACCESS_MAJOR:$PERSADMINACCESS_MINOR:$PERSADMINACCESS_MICRO
-AC_SUBST(GENERIC_LIBRARY_VERSION)
+PERS_ADMINACCESSLIB_CURRENT=$((((PERS_ADMINACCESSLIB_VERSION_N() / 1000) / 1000) % 1000 ))
+PERS_ADMINACCESSLIB_REVISION=$(( (PERS_ADMINACCESSLIB_VERSION_N() / 1000) % 1000 ))
+PERS_ADMINACCESSLIB_AGE=$((  PERS_ADMINACCESSLIB_VERSION_N() % 1000 ))
+PERS_ADMINACCESSLIB_VERSION=$PERS_ADMINACCESSLIB_CURRENT:$PERS_ADMINACCESSLIB_REVISION:$PERS_ADMINACCESSLIB_AGE
+AC_SUBST(PERS_ADMINACCESSLIB_VERSION)
 
 dnl ********************************
 dnl *** Check for basic programs ***
@@ -149,5 +149,4 @@ AC_CONFIG_FILES([   Makefile
                     test/pers_svc_test/Makefile 
                     test/persadmin_tool/Makefile])
 AC_OUTPUT
-
 

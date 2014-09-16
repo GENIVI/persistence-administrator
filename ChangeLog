@@ -1,6 +1,11 @@
 persistence-administrator ChangeLog
 ===================================
 
+Version 1.0.4 16.09.2014
+------------------------
+
+1.	Fixed format for the access lib version info.
+
 Version 1.0.3 12.09.2014
 ------------------------
 

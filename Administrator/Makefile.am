@@ -33,7 +33,7 @@ libpers_admin_access_lib_la_CFLAGS = \
 libpers_admin_access_lib_la_SOURCES = \
                                 src/ssw_pers_admin_access_lib.c
 
-libpers_admin_access_lib_la_LDFLAGS = -version-info $(GENERIC_LIBRARY_VERSION)
+libpers_admin_access_lib_la_LDFLAGS = -version-info $(PERS_ADMINACCESSLIB_VERSION)
 
 # pkgconfig
 pkgconfigdir = $(libdir)/pkgconfig
