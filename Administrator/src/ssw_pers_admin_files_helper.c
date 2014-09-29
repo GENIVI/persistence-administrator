@@ -11,6 +11,7 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
+* 2014.02.03 uidl9757           CSP_WZ#8463:  Added persadmin_get_file_size()
 * 2013.05.30 uidl9757           CSP_WZ#12188: Rework persadmin_get_folder_size()
 * 2013.02.07 uidu0250           CSP_WZ#2220:  Added persadmin_check_for_same_file_content to check for identical file content
 * 2012.11.16 uidv2833           CSP_WZ#1280:  persadmin_delete_folder and persadmin_delete_file return the number of bytes deleted
@@ -259,6 +260,32 @@ sint_t persadmin_get_file_extension(pstr_t filePath, pstr_t fileExtension_out, s
     return (bEverythingOK ? 0 : PAS_FAILURE) ;
 }
 
+/*
+* get the size of the file
+* returns size of the file, or a negative value in case of error
+*/
+sint_t persadmin_get_file_size(pconststr_t pathname)
+{
+    sint_t iFileSize = 0 ;
+
+    if(NIL != pathname)
+    {
+        if(0 <= persadmin_check_if_file_exists(pathname, false))
+        {
+            iFileSize = persadmin_priv_get_file_size(pathname) ;
+        }
+        else
+        {
+            iFileSize = PAS_FAILURE_NOT_FOUND ;
+        }
+    }
+    else
+    {
+        iFileSize = PAS_FAILURE_INVALID_PARAMETER ;
+    }
+
+    return iFileSize ;
+}
 
 /*
 * filePath can be absolute or relative

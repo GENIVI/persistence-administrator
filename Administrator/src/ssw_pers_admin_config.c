@@ -3,6 +3,7 @@
 * Copyright (C) 2012 Continental Automotive Systems, Inc.
 *
 * Author: Ana.Chisca@continental-corporation.com
+*         Ionut.Ieremie@continental-corporation.com
 *
 * Implementation of backup process
 *
@@ -11,6 +12,8 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
+* 2014.02.22 uidl9757           CSP_WZ#8795:  cfg_priv_json_open_internal_handle - pFileBuffer needs to end in '\0'
+* 2014.02.21 uidl9757           CSP_WZ#8795:  Improve performance by parsing the JSON files only once (at handle opening)
 * 2013.10.04 uidl9757           CSP_WZ#5962:  Initialisation of Default Value does not work for big key (>63 bytes) 
 * 2013.09.27 uidl9757           CSP_WZ#5781:  Fix memory leakage
 * 2013.09.23 uidl9757           CSP_WZ#5781:  Watchdog timeout of pas-daemon
@@ -37,16 +40,18 @@
 #include "persistence_admin_service.h"
 #include "persComTypes.h"
 #include "persComRct.h"
+#include "ssw_pers_admin_files_helper.h"
 #include "ssw_pers_admin_config.h"
 
 #define MAX_NESTING_DEPTH               ( 7)
 #define UNDEFINED_SIZE                  (-1)
+#define MAX_OPEN_HANDLES                (16) /* maximum JSON files open at a certain moment 
+                                              * 5 or 6 are enough for now, but let's have some room for the future */
 
 /* L&T context */
 #define LT_HDR                          "CFG >> "
 DLT_IMPORT_CONTEXT                      (persAdminSvcDLTCtx)
 
-#define DEBUG
 
 typedef struct _JSON_LookUp_s
 {
@@ -99,6 +104,22 @@ static JSON_LookUp_s g_JSON_LookUp_Table[] =
         {"END_OF_LKUP_LIST", 0}
 };
 
+/* structure to keep the actual information about open JSON files
+ * The caller of persAdmCfgFileOpen() will get only a fake handle */
+typedef struct
+{
+    json_object * pJsonObj ;    /* allocated by cfg_priv_json_open_internal_handle,
+                                 * freed by cfg_priv_json_close_internal_handle */
+}cfg_json_handle_s;
+
+
+/* internal handle*/
+typedef struct
+{
+    bool_t                  bIsAssigned ;
+    PersAdminCfgFileTypes_e eCfgFileType ;
+    cfg_json_handle_s       sJsonHandle ;
+}cfg_handle_s ;
 
 typedef enum _JSON_Key_LookUp_e
 {
@@ -135,7 +156,18 @@ static char* g_JSON_Key_Names[] =
    "type"
 };
 
-static signed int  cfg_priv_read_file                       (signed int handlerRCT, char** ppBufferFile);
+/* the vector with internal handles
+ * the external handles (returned by persAdmCfgFileOpen) are fake handles and represent the index in  g_sHandles */
+static cfg_handle_s g_sHandles[MAX_OPEN_HANDLES] ;
+
+/* internal handles related */
+static int cfg_priv_handle_find_free                        (void);
+static int cfg_priv_handle_check_validity                   (int iExternalHandle, PersAdminCfgFileTypes_e eCfgFileType);
+static int cfg_priv_handle_check_validity_for_close         (int iExternalHandle);
+static int cfg_priv_json_open_internal_handle               (const char * filePathname, PersAdminCfgFileTypes_e eCfgFileType, cfg_handle_s* psHandle_inout);
+static int cfg_priv_json_close_internal_handle              (cfg_handle_s* psHandle_inout);
+
+
 static signed int  cfg_priv_extract_rct_information         (char* pBuffer_in, signed int siBufferSize, PersistenceConfigurationKey_s* psConfig_out);
 static signed int  cfg_priv_extract_rules_information       (char* pBuffer_in, PersAdminCfgInstallRules_e* peRule_out);
 static signed int  cfg_priv_extract_exception_information   (char* pBuffer_in, PersAdminCfgInstallExceptions_e* peException_out);
@@ -156,10 +188,6 @@ static signed int  cfg_priv_json_parse_get_values           (json_object* jsobj,
 static signed int  cfg_priv_json_parse_get_values_all       (json_object* jsobj, char** ppBuffer_out, signed int* psiBufferSize, unsigned int uiNestingCounter);
 static signed int  cfg_priv_json_get_value                  (json_object *jsobj, char** ppBuffer_out, signed int* psiBufferSize);
 
-#ifdef VERBOSE_TRACE
-static void        print_buffer                             (char* pBuffer, unsigned int uiSize);
-#endif
-
 
 /***********************************************************************************************************************************
 *********************************************** General usage **********************************************************************
@@ -175,8 +203,8 @@ static void        print_buffer                             (char* pBuffer, unsi
  */
 signed int persAdmCfgFileOpen(char const * filePathname, PersAdminCfgFileTypes_e eCfgFileType)
 {
-    /* invalid file handler */
-    signed int siFileHandler = PAS_FAILURE_INVALID_PARAMETER;
+    signed int errorCode = PAS_SUCCESS ;
+    signed int indexInternalHandle = -1 ;
 
     /* check input parameters */
     if( NIL == filePathname )
@@ -185,27 +213,24 @@ signed int persAdmCfgFileOpen(char const * filePathname, PersAdminCfgFileTypes_e
                 DLT_STRING("persAdmCfgFileOpen"),
                 DLT_STRING("-"),
                 DLT_STRING("invalid input parameters"));
+        errorCode = PAS_FAILURE_INVALID_PARAMETER ;
     }
     else
     {
-        /* try to obtain handler */
-        siFileHandler = open(filePathname, O_RDONLY);
-        /* invalid file handler */
-        if( siFileHandler < 0 )
+        indexInternalHandle = cfg_priv_handle_find_free();
+        if(indexInternalHandle < 0)
         {
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgFileOpen"),
-                    DLT_STRING("-"),
-                    DLT_STRING("failed to open file"),
-                    DLT_STRING(filePathname),
-                    DLT_STRING("error"),
-                    DLT_INT(siFileHandler));
-            siFileHandler = PAS_FAILURE;
+            errorCode = PAS_FAILURE_OUT_OF_MEMORY ;
         }
     }
 
+    if(PAS_SUCCESS == errorCode)
+    {
+        errorCode = cfg_priv_json_open_internal_handle(filePathname, eCfgFileType, &g_sHandles[indexInternalHandle]);
+    }
+
     /* return result */
-    return siFileHandler;
+    return (PAS_SUCCESS == errorCode) ? indexInternalHandle : errorCode ;
 
 } /* persAdmCfgFileOpen */
 
@@ -218,17 +243,17 @@ signed int persAdmCfgFileOpen(char const * filePathname, PersAdminCfgFileTypes_e
  */
 signed int persAdmCfgFileClose(signed int handlerCfgFile)
 {
-    signed int siResult = PAS_FAILURE_INVALID_PARAMETER;
+    int errorCode = PAS_SUCCESS ;
 
-    /* valid handler */
-    if( 0 <= handlerCfgFile )
+    errorCode = cfg_priv_handle_check_validity_for_close(handlerCfgFile) ;
+
+    if(PAS_SUCCESS == errorCode)
     {
-        (void)close(handlerCfgFile);
-        siResult = PAS_SUCCESS;
+        cfg_priv_json_close_internal_handle(&g_sHandles[handlerCfgFile]);
     }
 
     /* return result */
-    return siResult;
+    return errorCode ;
 
 } /* persAdmCfgFileClose() */
 
@@ -248,118 +273,59 @@ signed int persAdmCfgFileClose(signed int handlerCfgFile)
 signed int persAdmCfgRctRead(signed int handlerRCT, char const * resourceID, PersistenceConfigurationKey_s* psConfig_out)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
-    char*       pBuffer_out = NIL;
-
-    if( (NIL == resourceID)   ||
-        (NIL == psConfig_out) ||
-        (0 > handlerRCT))
+    char*       pBufferTemp = NIL;
+    char        bufferTemp[1024];
+    
+    siResult = cfg_priv_handle_check_validity(handlerRCT, PersAdminCfgFileType_RCT) ;
+    if(PAS_SUCCESS == siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgRctRead"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
-    }
-    else
-    {
-        #ifdef VERBOSE_TRACE
-        /* some info */
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR),
-                        DLT_STRING("persAdmCfgRctRead"),
-                        DLT_STRING("-"),
-                        DLT_STRING(resourceID));
-        #endif
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRCT, &pBufferFile);
-        siResult = (0 == siResult) ? PAS_FAILURE : siResult;
-    }
-
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the RCT file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
+        if( (NIL == resourceID) || (NIL == psConfig_out) )
         {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgRctRead"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__), DLT_STRING(" - invalid input parameters"));
+            siResult = PAS_FAILURE_INVALID_PARAMETER;
+        }
+    }
+
+    if(PAS_SUCCESS == siResult)
+    {
+        /* get size to accommodate values */
+        int iBufferTempSize = cfg_priv_json_parse_get_values_size(g_sHandles[handlerRCT].sJsonHandle.pJsonObj, resourceID);
+        if(iBufferTempSize > 0)
+        {
+            if(iBufferTempSize <= sizeof(bufferTemp))
+            {
+                char* pTemp = bufferTemp ;
+                siResult = cfg_priv_json_parse_get_values(g_sHandles[handlerRCT].sJsonHandle.pJsonObj, resourceID, &pTemp, &iBufferTempSize, 0);
+            }
+            else
+            {
+                pBufferTemp = (char*)malloc(iBufferTempSize);
+                if(NULL != pBufferTemp)
+                {
+                    siResult = cfg_priv_json_parse_get_values(g_sHandles[handlerRCT].sJsonHandle.pJsonObj, resourceID, &pBufferTemp, &iBufferTempSize, 0);
+                }
+            }
         }
         else
         {
-            /* get size to accommodate values */
-            siResult = cfg_priv_json_parse_get_values_size(jsobj, resourceID);
             siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
         }
-
-        if( PAS_SUCCESS < siResult )
-        {
-            pBuffer_out = (char*) malloc(((size_t)siResult * sizeof(char))); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-            if( NIL == pBuffer_out )
-            {
-                /* raise & set error */
-                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                        DLT_STRING("persAdmCfgRctRead"),
-                        DLT_STRING("-"),
-                        DLT_STRING("error"),
-                        DLT_INT(siResult),
-                        DLT_STRING("allocating"),
-                        DLT_INT(siResult),
-                        DLT_STRING("bytes"));
-                siResult = PAS_FAILURE_OUT_OF_MEMORY;
-            }
-        }
-
-        if( PAS_SUCCESS < siResult )
-        {
-            /* work with temporary variables */
-            signed int siResultTemp     = siResult;
-            char*      pBuffer_outTemp  = pBuffer_out;
-
-            /* reset */
-            (void)memset(pBuffer_out, 0, ((size_t)siResult * sizeof(char)));
-            /* parse RCT file */
-            siResultTemp = cfg_priv_json_parse_get_values(jsobj, resourceID, &pBuffer_outTemp, &siResultTemp, 0);
-            /* interpret result */
-            siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
-        }
-
-        if( PAS_SUCCESS < siResult )
-        {
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(pBuffer_out, (unsigned int)siResult);
-#endif
-            /* parse corresponding array and extract specific information */
-            siResult = cfg_priv_extract_rct_information(pBuffer_out, siResult, psConfig_out);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
     }
 
-    /* perform cleaning operations */
-    if( NIL != pBuffer_out )
+    if(siResult >= PAS_SUCCESS)
     {
-        free(pBuffer_out); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBuffer_out = NIL;
+        /* parse corresponding array and extract specific information */
+        char* pBuffer = (NULL == pBufferTemp) ? bufferTemp : pBufferTemp ;
+        siResult = cfg_priv_extract_rct_information(pBuffer, siResult, psConfig_out);
     }
 
-    if( NIL != pBufferFile )
+    if(NULL != pBufferTemp)
     {
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
+        free(pBufferTemp);
     }
 
     /* return 0 for success */
-    return siResult;
+    return (siResult >= 0) ? 0 : siResult ;
 
 } /* persAdmCfgRctRead() */ /*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
 
@@ -375,54 +341,13 @@ signed int persAdmCfgRctRead(signed int handlerRCT, char const * resourceID, Per
 signed int persAdmCfgRctGetSizeResourcesList(signed int handlerRCT)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL; /* deallocation is in caller's responsibility */
 
-    if( 0 > handlerRCT )
+    siResult = cfg_priv_handle_check_validity(handlerRCT, PersAdminCfgFileType_RCT) ;
+    if(PAS_SUCCESS == siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgRctGetSizeResourcesList"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
-    }
-    else
-    {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRCT, &pBufferFile);
+        siResult = cfg_priv_json_parse_get_keys_size(g_sHandles[handlerRCT].sJsonHandle.pJsonObj, g_JSON_Key_Names[JsonKey_Resources]);
     }
 
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the RCT file */
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgRctGetSizeResourcesList"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size */
-            siResult = cfg_priv_json_parse_get_keys_size(jsobj, g_JSON_Key_Names[JsonKey_Resources]);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */      
-            json_object_put(jsobj) ;
-        }
-    }
-
-    if(NIL != pBufferFile)
-    {/* deallocation is in caller's responsibility */
-        free(pBufferFile);
-    }
-
-    /* return size */
     return siResult;
 
 } /* persAdmCfgRctGetSizeResourcesList() */
@@ -441,61 +366,27 @@ signed int persAdmCfgRctGetSizeResourcesList(signed int handlerRCT)
 signed int persAdmCfgRctGetResourcesList(signed int handlerRCT, char* listBuffer_out, signed int listBufferSize)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
 
-    if( (NIL == listBuffer_out)   ||
-        (0 > handlerRCT))
+    siResult = cfg_priv_handle_check_validity(handlerRCT, PersAdminCfgFileType_RCT) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NULL == listBuffer_out)
+        ||  (listBufferSize <= 0) )
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgRctGetResourcesList"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRCT, &pBufferFile);
-    }
+        /* work with temporary variables */
+        char* pBuffer_outTemp = listBuffer_out;
 
-    if( PAS_SUCCESS < siResult )
-    {
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgRctGetResourcesList"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* work with temporary variables */
-            char* pBuffer_outTemp = listBuffer_out;
-
-            /* reset */
-            (void)memset(listBuffer_out, 0, ((size_t)listBufferSize * sizeof(char)));
-            siResult = listBufferSize;
-
-            /* parse RCT file & search for 'resources' key */
-            siResult = cfg_priv_json_parse_get_keys(jsobj, g_JSON_Key_Names[JsonKey_Resources], &pBuffer_outTemp, &siResult, 0);
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(listBuffer_out, (unsigned int)listBufferSize);
-#endif
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
-
-        /* perform cleaning operations */
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
+        /* reset */
+        siResult = listBufferSize;
+    
+        /* parse RCT file & search for 'resources' key */
+        siResult = cfg_priv_json_parse_get_keys(g_sHandles[handlerRCT].sJsonHandle.pJsonObj, g_JSON_Key_Names[JsonKey_Resources], &pBuffer_outTemp, &siResult, 0);
     }
 
     /* return number of bytes in buffer */
@@ -519,54 +410,20 @@ signed int persAdmCfgRctGetResourcesList(signed int handlerRCT, char* listBuffer
 signed int persAdmCfgRulesGetSizeFoldersList(signed int handlerRulesFile)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL; /* deallocation is in caller's responsibility */
 
-    if( 0 > handlerRulesFile )
+    siResult = cfg_priv_handle_check_validity(handlerRulesFile, PersAdminCfgFileType_InstallRules) ;
+    if(PAS_SUCCESS == siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-             DLT_STRING("persAdmCfgRulesGetSizeFoldersList"),
-             DLT_STRING("-"),
-             DLT_STRING("invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
+        /* get size */
+        siResult = cfg_priv_json_parse_get_keys_all_size(g_sHandles[handlerRulesFile].sJsonHandle.pJsonObj);
     }
     else
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRulesFile, &pBufferFile);
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
+        siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
 
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the install rules file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                 DLT_STRING("persAdmCfgRulesGetSizeFoldersList"),
-                 DLT_STRING("-"),
-                 DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size */
-            siResult = cfg_priv_json_parse_get_keys_all_size(jsobj);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
-    }
-
-    if(NIL != pBufferFile)
-    {/* deallocation is in caller's responsibility */
-        free(pBufferFile);
-    }
-    
     /* return size */
     return siResult;
 
@@ -586,61 +443,27 @@ signed int persAdmCfgRulesGetSizeFoldersList(signed int handlerRulesFile)
 signed int persAdmCfgRulesGetFoldersList(signed int handlerRulesFile, char* listBuffer_out, signed int listBufferSize)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
 
-    if( (NIL == listBuffer_out)   ||
-        (0 > handlerRulesFile))
+    siResult = cfg_priv_handle_check_validity(handlerRulesFile, PersAdminCfgFileType_InstallRules) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NIL == listBuffer_out) 
+        || (listBufferSize <= 0) )
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgRulesGetFoldersList"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRulesFile, &pBufferFile);
-    }
+        /* work with temporary variables */
+        char* pBuffer_outTemp = listBuffer_out;
 
-    if( PAS_SUCCESS < siResult )
-    {
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgRulesGetFoldersList"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* work with temporary variables */
-            char* pBuffer_outTemp = listBuffer_out;
+        /* reset */
+        siResult = listBufferSize;
 
-            /* reset */
-            (void)memset(listBuffer_out, 0, ((size_t)listBufferSize * sizeof(char)));
-            siResult = listBufferSize;
-
-            /* parse install rules file & get all keys */
-            siResult = cfg_priv_json_parse_get_keys_all(jsobj, &pBuffer_outTemp, &siResult);
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(listBuffer_out, (unsigned int)listBufferSize);
-#endif
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
-
-        /* perform cleaning operations */
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
+        /* parse install rules file & get all keys */
+        siResult = cfg_priv_json_parse_get_keys_all(g_sHandles[handlerRulesFile].sJsonHandle.pJsonObj, &pBuffer_outTemp, &siResult);
     }
 
     /* return number of bytes in buffer */
@@ -661,108 +484,54 @@ signed int persAdmCfgRulesGetFoldersList(signed int handlerRulesFile, char* list
 signed int persAdmCfgRulesGetRuleForFolder(signed int handlerRulesFile, char* folderName, PersAdminCfgInstallRules_e* peRule_out)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
-    char*       pBuffer_out = NIL;
+    char*       pBufferTemp = NIL;
 
-    if( (NIL == folderName) ||
-        (NIL == peRule_out) ||
-        (0 > handlerRulesFile))
+    siResult = cfg_priv_handle_check_validity(handlerRulesFile, PersAdminCfgFileType_InstallRules) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NIL == folderName) 
+        ||  (NIL == peRule_out) )
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgRulesGetRuleForFolder"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerRulesFile, &pBufferFile);
-        siResult = (0 == siResult) ? PAS_FAILURE : siResult;
-    }
-
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the install file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgRulesGetRuleForFolder"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size to accommodate values */
-            siResult = cfg_priv_json_parse_get_values_size(jsobj, folderName);
-            siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
-        }
-
+        /* get size to accommodate values */
+        siResult = cfg_priv_json_parse_get_values_size(g_sHandles[handlerRulesFile].sJsonHandle.pJsonObj, folderName);
+        siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
         if( PAS_SUCCESS < siResult )
         {
-            pBuffer_out = (char*) malloc(((size_t)siResult * sizeof(char))); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-            if( NIL == pBuffer_out )
+            pBufferTemp = (char*) malloc(siResult); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+            if( NIL == pBufferTemp )
             {
-                /* raise & set error */
-                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                        DLT_STRING("persAdmCfgRulesGetRuleForFolder"),
-                        DLT_STRING("-"),
-                        DLT_STRING("error"),
-                        DLT_INT(siResult),
-                        DLT_STRING("allocating"),
-                        DLT_INT(siResult),
-                        DLT_STRING("bytes"));
                 siResult = PAS_FAILURE_OUT_OF_MEMORY;
             }
         }
-
-        if( PAS_SUCCESS < siResult )
-        {
-            /* work with temporary variables */
-            signed int siResultTemp     = siResult;
-            char*      pBuffer_outTemp  = pBuffer_out;
-
-            /* reset */
-            (void)memset(pBuffer_out, 0, ((size_t)siResult * sizeof(char)));
-            /* parse install rules file */
-            siResultTemp = cfg_priv_json_parse_get_values(jsobj, folderName, &pBuffer_outTemp, &siResultTemp, 0);
-            /* interpret result */
-            siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
-        }
-
-        if( PAS_SUCCESS < siResult )
-        {
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(pBuffer_out, (unsigned int)siResult);
-#endif
-
-            /* parse corresponding array and extract specific information */
-            siResult = cfg_priv_extract_rules_information(pBuffer_out, peRule_out);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
     }
 
-    /* perform cleaning operations */
-    if( NIL != pBuffer_out )
+    if(siResult > PAS_SUCCESS)
     {
-        free(pBuffer_out); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBuffer_out = NIL;
+        /* work with temporary variables */
+        signed int siResultTemp     = siResult;
+        char*      pBufferTempTemp  = pBufferTemp;
+
+        /* parse install rules file */
+        siResultTemp = cfg_priv_json_parse_get_values(g_sHandles[handlerRulesFile].sJsonHandle.pJsonObj, folderName, &pBufferTempTemp, &siResultTemp, 0);
+        /* interpret result */
+        siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
     }
 
-    if( NIL != pBufferFile )
+    if(siResult > PAS_SUCCESS)
     {
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
+        /* parse corresponding array and extract specific information */
+        siResult = cfg_priv_extract_rules_information(pBufferTemp, peRule_out);
+    }
+
+    if(NULL != pBufferTemp)
+    {
+        free(pBufferTemp);
     }
 
     /* return 0 for success */
@@ -786,59 +555,20 @@ signed int persAdmCfgRulesGetRuleForFolder(signed int handlerRulesFile, char* fo
 signed int persAdmCfgExcGetSizeResourcesList(signed int handlerExceptionsFile)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL; /* deallocation is in caller's responsibility */
 
-    if( 0 > handlerExceptionsFile )
+    siResult = cfg_priv_handle_check_validity(handlerExceptionsFile, PersAdminCfgFileType_InstallExceptions) ;
+    if(PAS_SUCCESS != siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-             DLT_STRING("persAdmCfgExcGetSizeResourcesList"),
-             DLT_STRING("-"),
-             DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerExceptionsFile, &pBufferFile);
+        /* get size */
+        siResult = cfg_priv_json_parse_get_keys_all_size(g_sHandles[handlerExceptionsFile].sJsonHandle.pJsonObj);
     }
-
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the install exceptions file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                 DLT_STRING("persAdmCfgExcGetSizeResourcesList"),
-                 DLT_STRING("-"),
-                 DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size */
-            siResult = cfg_priv_json_parse_get_keys_all_size(jsobj);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
-    }
-
-    if(NIL != pBufferFile)
-    {/* deallocation is in caller's responsibility */
-        free(pBufferFile) ;
-    }
-
-    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR),
-         DLT_STRING("persAdmCfgExcGetSizeResourcesList"),
-         DLT_STRING("-"),
-         DLT_STRING("size ="),
-         DLT_INT(siResult));
 
     /* return size */
     return siResult;
@@ -859,61 +589,27 @@ signed int persAdmCfgExcGetSizeResourcesList(signed int handlerExceptionsFile)
 signed int persAdmCfgExcGetFoldersList(signed int handlerExceptionsFile, char* listBuffer_out, signed int listBufferSize)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
 
-    if( (NIL == listBuffer_out)   ||
-        (0 > handlerExceptionsFile))
+    siResult = cfg_priv_handle_check_validity(handlerExceptionsFile, PersAdminCfgFileType_InstallExceptions) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NIL == listBuffer_out)
+        ||  (listBufferSize <= 0) )
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgExcGetFoldersList"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerExceptionsFile, &pBufferFile);
-    }
+        /* work with temporary variables */
+        char* pBuffer_outTemp = listBuffer_out;
 
-    if( PAS_SUCCESS < siResult )
-    {
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgExcGetFoldersList"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* work with temporary variables */
-            char* pBuffer_outTemp = listBuffer_out;
-
-            /* reset */
-            (void)memset(listBuffer_out, 0, ((size_t)listBufferSize * sizeof(char)));
-            siResult = listBufferSize;
-
-            /* parse install exceptions file & get all keys */
-            siResult = cfg_priv_json_parse_get_keys_all(jsobj, &pBuffer_outTemp, &siResult);
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(listBuffer_out, (unsigned int)listBufferSize);
-#endif
-        }
-
-        /* perform cleaning operations */
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
+        /* reset */
+        siResult = listBufferSize;
+    
+        /* parse install exceptions file & get all keys */
+        siResult = cfg_priv_json_parse_get_keys_all(g_sHandles[handlerExceptionsFile].sJsonHandle.pJsonObj, &pBuffer_outTemp, &siResult);
     }
 
     /* return number of bytes in buffer */
@@ -931,110 +627,57 @@ signed int persAdmCfgExcGetFoldersList(signed int handlerExceptionsFile, char* l
  *
  * \return 0 for success, or negative value for error (\ref PERSADM_CFG_ERROR_CODES_DEFINES)
  */
-signed int persAdmCfgExcGetExceptionForResource(signed int handlerExceptionsFile, char* resource, PersAdminCfgInstallExceptions_e* peException_out)
+signed int persAdmCfgExcGetExceptionForResource(signed int handlerExceptionsFile, char* resourceID, PersAdminCfgInstallExceptions_e* peException_out)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
-    char*       pBuffer_out = NIL;
+    char*       pBufferTemp = NIL;
 
-    if( (NIL == resource) ||
-        (NIL == peException_out) ||
-        (0 > handlerExceptionsFile))
+    siResult = cfg_priv_handle_check_validity(handlerExceptionsFile, PersAdminCfgFileType_InstallExceptions) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NIL == resourceID) 
+        ||  (NIL == peException_out) )
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgExcGetExceptionForResource"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
-    {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerExceptionsFile, &pBufferFile);
-        siResult = (0 == siResult) ? PAS_FAILURE : siResult;
-    }
 
-    if( PAS_SUCCESS < siResult )
+    if(PAS_SUCCESS == siResult)
     {
-        /* parse the install file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
+        /* get size to accommodate values */
+        siResult = cfg_priv_json_parse_get_values_size(g_sHandles[handlerExceptionsFile].sJsonHandle.pJsonObj, resourceID);
+        siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
+        if(siResult > 0)
         {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgExcGetExceptionForResource"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size to accommodate values */
-            siResult = cfg_priv_json_parse_get_values_size(jsobj, resource);
-            siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
-        }
-
-        if( PAS_SUCCESS < siResult )
-         {
-             pBuffer_out = (char*) malloc(((size_t)siResult * sizeof(char))); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-             if( NIL == pBuffer_out )
-             {
-                 /* raise & set error */
-                 DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                         DLT_STRING("persAdmCfgExcGetExceptionForResource"),
-                         DLT_STRING("-"),
-                         DLT_STRING("error"),
-                         DLT_INT(siResult),
-                         DLT_STRING("allocating"),
-                         DLT_INT(siResult),
-                         DLT_STRING("bytes"));
-                 siResult = PAS_FAILURE_OUT_OF_MEMORY;
-             }
-         }
-
-         if( PAS_SUCCESS < siResult )
-         {
-             /* work with temporary variables */
-             signed int siResultTemp     = siResult;
-             char*      pBuffer_outTemp  = pBuffer_out;
-
-             /* reset */
-             (void)memset(pBuffer_out, 0, ((size_t)siResult * sizeof(char)));
-             /* parse install exceptions file */
-             siResultTemp = cfg_priv_json_parse_get_values(jsobj, resource, &pBuffer_outTemp, &siResultTemp, 0);
-             /* interpret result */
-             siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
-         }
-
-         if( PAS_SUCCESS < siResult )
-         {
-#ifdef VERBOSE_TRACE
-             /* debug only */
-             print_buffer(pBuffer_out, (unsigned int)siResult);
-#endif
-             /* parse corresponding array and extract specific information */
-             siResult = cfg_priv_extract_exception_information(pBuffer_out, peException_out);
-         }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
+            pBufferTemp = (char*) malloc(siResult); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+            if( NIL == pBufferTemp )
+            {
+                siResult = PAS_FAILURE_OUT_OF_MEMORY;
+            }        
         }
     }
 
-    /* perform cleaning operations */
-    if( NIL != pBuffer_out )
+    if(siResult > PAS_SUCCESS)
     {
-        free(pBuffer_out); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBuffer_out = NIL;
+        /* work with temporary variables */
+        signed int siResultTemp     = siResult;
+        char*      pBufferTempTemp  = pBufferTemp;
+
+        siResultTemp = cfg_priv_json_parse_get_values(g_sHandles[handlerExceptionsFile].sJsonHandle.pJsonObj, resourceID, &pBufferTempTemp, &siResultTemp, 0);
+        /* interpret result */
+        siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
+    }
+    
+    if(siResult > PAS_SUCCESS)
+    {
+         /* parse corresponding array and extract specific information */
+         siResult = cfg_priv_extract_exception_information(pBufferTemp, peException_out);
     }
 
-    if( NIL != pBufferFile )
+
+    if(NULL != pBufferTemp)
     {
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
+        free(pBufferTemp);
     }
 
     /* return 0 for success */
@@ -1056,54 +699,21 @@ signed int persAdmCfgExcGetExceptionForResource(signed int handlerExceptionsFile
 signed int persAdmCfgGroupContentGetSizeMembersList(signed int handlerGroupContent)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL; /* deallocation is in caller's responsibility */
 
-    if( 0 > handlerGroupContent )
+    siResult = cfg_priv_handle_check_validity(handlerGroupContent, PersAdminCfgFileType_GroupContent) ;
+    if(PAS_SUCCESS == siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-             DLT_STRING("persAdmCfgGroupContentGetSizeMembersList"),
-             DLT_STRING("-"),
-             DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerGroupContent, &pBufferFile);
+        /* get size */
+        siResult = cfg_priv_json_parse_get_keys_all_size(g_sHandles[handlerGroupContent].sJsonHandle.pJsonObj);
     }
 
-    if( PAS_SUCCESS < siResult )
-    {
-        /* parse the groups file */
-
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                 DLT_STRING("persAdmCfgGroupContentGetSizeMembersList"),
-                 DLT_STRING("-"),
-                 DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size */
-            siResult = cfg_priv_json_parse_get_keys_all_size(jsobj);
-        }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */            
-            json_object_put(jsobj) ;
-        }
-    }
-
-    if(NIL != pBufferFile)
-    {/* deallocation is in caller's responsibility */
-        free(pBufferFile);
-    }
-    
     /* return size */
     return siResult;
 
@@ -1123,61 +733,27 @@ signed int persAdmCfgGroupContentGetSizeMembersList(signed int handlerGroupConte
 signed int persAdmCfgGroupContentGetMembersList(signed int handlerGroupContent, char* listBuffer_out, signed int listBufferSize)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
 
-    if( (NIL == listBuffer_out)   ||
-        (0 > handlerGroupContent))
+    siResult = cfg_priv_handle_check_validity(handlerGroupContent, PersAdminCfgFileType_GroupContent) ;
+    if(     (PAS_SUCCESS != siResult)
+        ||  (NIL == listBuffer_out)
+        ||  (listBufferSize <= 0) )        
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgGroupContentGetMembersList"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
         siResult = PAS_FAILURE_INVALID_PARAMETER;
     }
-    else
+
+    if(PAS_SUCCESS == siResult)
     {
-        /* read file content */
-        siResult = cfg_priv_read_file(handlerGroupContent, &pBufferFile);
-    }
+        /* work with temporary variables */
+        char* pBuffer_outTemp = listBuffer_out;
 
-    if( PAS_SUCCESS < siResult )
-    {
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgGroupContentGetMembersList"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* work with temporary variables */
-            char* pBuffer_outTemp = listBuffer_out;
-
-            /* reset */
-            (void)memset(listBuffer_out, 0, (size_t)listBufferSize * sizeof(char));
-            siResult = listBufferSize;
-
-            /* parse groups file & get all keys */
-            siResult = cfg_priv_json_parse_get_keys_all(jsobj, &pBuffer_outTemp, &siResult);
-#ifdef VERBOSE_TRACE
-            /* debug only */
-            print_buffer(listBuffer_out, (unsigned int)listBufferSize);
-#endif
-        }
-
-        /* perform cleaning operations */
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
+        /* reset */
+        siResult = listBufferSize;
+    
+        /* parse groups file & get all keys */
+        siResult = cfg_priv_json_parse_get_keys_all(g_sHandles[handlerGroupContent].sJsonHandle.pJsonObj, &pBuffer_outTemp, &siResult);
     }
 
     /* return number of bytes in buffer */
@@ -1200,107 +776,59 @@ signed int persAdmCfgGroupContentGetMembersList(signed int handlerGroupContent, 
 signed int persAdmCfgReadDefaultData(signed int hDefaultDataFile, char const * resourceID, char* defaultDataBuffer_out, signed int bufferSize)
 {
     signed int  siResult    = PAS_SUCCESS;
-    char*       pBufferFile = NIL;
     char*       pBuffer_out = NIL;
 
-    if( (NIL == resourceID) ||
-        (NIL == defaultDataBuffer_out) ||
-        (0 > hDefaultDataFile))
+    siResult = cfg_priv_handle_check_validity(hDefaultDataFile, PersAdminCfgFileType_Database) ;
+    if(PAS_SUCCESS == siResult)
     {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("persAdmCfgReadDefaultData"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
-    }
-    else
-    {
-        /* read file content */
-        siResult = cfg_priv_read_file(hDefaultDataFile, &pBufferFile);
-        siResult = (0 == siResult) ? PAS_FAILURE : siResult;
+        if(     (NIL == resourceID) 
+            ||  (NIL == defaultDataBuffer_out) 
+            ||  (bufferSize <= 0)   )
+        {
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__), DLT_STRING(" - invalid input parameters"));
+            siResult = PAS_FAILURE_INVALID_PARAMETER;
+        }
     }
 
-    if( PAS_SUCCESS < siResult )
+    if(PAS_SUCCESS == siResult)
     {
-        /* parse the default data file */
+        /* get size to accommodate values */
+        siResult = cfg_priv_json_parse_get_values_size(g_sHandles[hDefaultDataFile].sJsonHandle.pJsonObj, resourceID);
+        siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
 
-        json_object* jsobj = NIL; /* deallocation is in caller's responsibility */
-        jsobj = json_tokener_parse(pBufferFile);
-        if( NIL == jsobj )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("persAdmCfgReadDefaultData"),
-                    DLT_STRING("-"),
-                    DLT_STRING("json_tokener_parse"));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* get size to accommodate values */
-            siResult = cfg_priv_json_parse_get_values_size(jsobj, resourceID);
-            siResult = (0 == siResult) ? PAS_FAILURE_NOT_FOUND : siResult;
-        }
 
-        if( PAS_SUCCESS < siResult )
+        if(siResult > PAS_SUCCESS)
         {
-             pBuffer_out = (char*) malloc(((size_t)siResult * sizeof(char))); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+             pBuffer_out = (char*) malloc(siResult); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
              if( NIL == pBuffer_out )
              {
-                 /* raise & set error */
-                 DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                         DLT_STRING("persAdmCfgReadDefaultData"),
-                         DLT_STRING("-"),
-                         DLT_STRING("error"),
-                         DLT_INT(siResult),
-                         DLT_STRING("allocating"),
-                         DLT_INT(siResult),
-                         DLT_STRING("bytes"));
                  siResult = PAS_FAILURE_OUT_OF_MEMORY;
              }
         }
 
-         if( PAS_SUCCESS < siResult )
-         {
-             /* work with temporary variables */
-             signed int siResultTemp     = siResult;
-             char*      pBuffer_outTemp  = pBuffer_out;
+        if(siResult > PAS_SUCCESS)
+        {
+            /* work with temporary variables */
+            signed int siResultTemp     = siResult;
+            char*      pBuffer_outTemp  = pBuffer_out;
 
-             /* reset */
-             (void)memset(pBuffer_out, 0, (size_t)siResult * sizeof(char));
-             /* parse default data file */
-             siResultTemp = cfg_priv_json_parse_get_values(jsobj, resourceID, &pBuffer_outTemp, &siResultTemp, 0);
-             /* interpret result */
-             siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
-         }
+            /* parse default data file */
+            siResultTemp = cfg_priv_json_parse_get_values(g_sHandles[hDefaultDataFile].sJsonHandle.pJsonObj, resourceID, &pBuffer_outTemp, &siResultTemp, 0);
+            /* interpret result */
+            siResult = (siResultTemp != siResult) ? PAS_FAILURE : siResultTemp;
+        }
 
-         if( PAS_SUCCESS < siResult )
+         if(siResult > PAS_SUCCESS)
          {
-#ifdef VERBOSE_TRACE
-             /* debug only */
-             print_buffer(pBuffer_out, (unsigned int)siResult);
-#endif
              /* parse corresponding array and extract specific information */
              siResult = cfg_priv_extract_default_data_information(pBuffer_out, siResult, defaultDataBuffer_out, bufferSize);
          }
-
-        if(NIL != jsobj)
-        {/* deallocation is in caller's responsibility */
-            json_object_put(jsobj) ;
-        }
     }
 
     /* perform cleaning operations */
     if( NIL != pBuffer_out )
     {
         free(pBuffer_out); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBuffer_out = NIL;
-    }
-
-    if( NIL != pBufferFile )
-    {
-        free(pBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-        pBufferFile = NIL;
     }
 
     /* size of data */
@@ -1310,86 +838,6 @@ signed int persAdmCfgReadDefaultData(signed int hDefaultDataFile, char const * r
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-static signed int cfg_priv_read_file(signed int handlerRCT, char** ppBufferFile)
-{
-    signed int  siResult = PAS_SUCCESS;
-    struct stat sstat;
-
-    if( NIL == ppBufferFile )
-    {
-        /* raise & set error */
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                DLT_STRING("cfg_priv_read_file"),
-                DLT_STRING("-"),
-                DLT_STRING("invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
-    }
-    else
-    {
-        /* re-position at the start of file */
-        (void)lseek(handlerRCT, 0, SEEK_SET);
-        
-        siResult = fstat(handlerRCT, &sstat);
-        if( PAS_SUCCESS > siResult )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("cfg_priv_read_file"),
-                    DLT_STRING("-"),
-                    DLT_STRING("stat error"),
-                    DLT_INT(siResult));
-            siResult = PAS_FAILURE;
-        }
-        else
-        {
-            /* allocate memory to read in the file */
-            *ppBufferFile = (char*) malloc(((size_t)sstat.st_size + 1 /* '\0' */) * sizeof(char)); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-            if( NIL == (*ppBufferFile) )
-            {
-                /* raise & set error */
-                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                        DLT_STRING("persAdmCfgRctRead"),
-                        DLT_STRING("-"),
-                        DLT_STRING("error"),
-                        DLT_INT(siResult),
-                        DLT_STRING("allocating"),
-                        DLT_INT(sstat.st_size + 1),
-                        DLT_STRING("bytes"));
-                siResult = PAS_FAILURE_OUT_OF_MEMORY;
-            }
-        }
-    }
-
-    if( PAS_SUCCESS <= siResult )
-    {
-        /* reset */
-        (void)memset(*ppBufferFile, 0, ((size_t)(sstat.st_size + 1 /* '\0' */) * sizeof(char)) );
-
-        siResult = read(handlerRCT, *ppBufferFile, (size_t)sstat.st_size);
-        if( siResult != sstat.st_size )
-        {
-            /* raise & set error */
-            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR),
-                    DLT_STRING("cfg_priv_read_file"),
-                    DLT_STRING("-"),
-                    DLT_STRING("read error"),
-                    DLT_INT(siResult),
-                    DLT_STRING("!="),
-                    DLT_INT(sstat.st_size));
-            siResult = PAS_FAILURE;
-
-            /* free the allocated memory */
-            free(*ppBufferFile); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-            *ppBufferFile = NIL;
-        }
-    }
-
-    /* return number of bytes in the file */
-    return siResult;
-
-} /* cfg_priv_read_file() */ /*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
-
 
 /* Assumption that pBuffer_in contains information in the following form: "key1\0data1\0key2\0data2\0.." */
 static signed int cfg_priv_extract_rct_information(char* pBuffer_in, signed int siBufferSize, PersistenceConfigurationKey_s * psConfig_out)
@@ -1993,63 +1441,142 @@ static signed int cfg_priv_json_parse_get_values_size(json_object* jsobj, char c
 
 } /* cfg_priv_json_parse_get_values_size() */
 
-
-#ifdef VERBOSE_TRACE
-static void print_buffer(char* pBuffer, unsigned int uiSize)
+static int cfg_priv_handle_find_free(void)
 {
-    char*  ptemp = pBuffer;
-    /* iterate through array and print keys and values */
-    (void)printf("============================\n");
-    (void)printf("size = %d\n", uiSize);
-    while( ptemp < (pBuffer + uiSize) )
+    int index = PAS_FAILURE_OUT_OF_MEMORY ;
+    int i ;
+    /* from 1, to not create confusion */
+    for(i = 1 ; i < sizeof(g_sHandles)/sizeof(g_sHandles[0]) ; i++)
     {
-       (void)printf("%s\n", ptemp);
-       /* move on to the next */
-       ptemp += (strlen(ptemp) + 1 /* \0 */);
-    }
-    (void)printf("============================\n");
-
-} /* print_buffer() */
-#endif
-
-
-#if 0
-void json_parse_array( json_object *jobj, char *key)
-{
-    enum json_type type;
-    int arraylen = 0;
-    int i;
-    json_object * jvalue;
-    json_object *jarray = jobj; /*Simply get the array*/
-
-    if(key)
-    {
-        jarray = json_object_object_get(jobj, key); /*Getting the array if it is a key value pair*/
-    }
-
-    arraylen = json_object_array_length(jarray); /*Getting the length of the array*/
-    printf("Array Length: %d \n",arraylen);
-
-    for( i = 0; i< arraylen; i++ )
-    {
-        jvalue = json_object_array_get_idx(jarray, i); /*Getting the array element at position i*/
-        type = json_object_get_type(jvalue);
-        if (type == json_type_array)
+        if(false == g_sHandles[i].bIsAssigned)
         {
-          /* recursive */
-          json_parse_array(jvalue, NIL);
+            index = i ;
+            break ;
         }
-        else if (type != json_type_object)
+    }
+
+    return index ;
+}
+
+static int cfg_priv_handle_check_validity(int iExternalHandle, PersAdminCfgFileTypes_e eCfgFileType)
+{
+    int                         errorCode = PAS_SUCCESS ;
+
+    if((iExternalHandle >= 1) && (iExternalHandle < sizeof(g_sHandles)/sizeof(g_sHandles[0])))
+    {
+        if( (true != g_sHandles[iExternalHandle].bIsAssigned) || (eCfgFileType != g_sHandles[iExternalHandle].eCfgFileType) )
         {
-          printf("value[%d]: ",i);
-          print_json_value(jvalue);
-          printf("\n");
+            errorCode = PAS_FAILURE_INVALID_PARAMETER ;
+        }
+    }
+    else
+    {
+        errorCode = PAS_FAILURE_INVALID_PARAMETER ;
+    }
+
+    return errorCode ;
+}
+
+static int cfg_priv_handle_check_validity_for_close(int iExternalHandle)
+{
+    int                         errorCode = PAS_SUCCESS ;
+
+    if((iExternalHandle >= 1) && (iExternalHandle < sizeof(g_sHandles)/sizeof(g_sHandles[0])))
+    {
+        if(true != g_sHandles[iExternalHandle].bIsAssigned)
+        {
+            errorCode = PAS_FAILURE_INVALID_PARAMETER ;
+        }
+    }
+    else
+    {
+        errorCode = PAS_FAILURE_INVALID_PARAMETER ;
+    }
+
+    return errorCode ;
+}
+
+static int cfg_priv_json_open_internal_handle(const char * filePathname, PersAdminCfgFileTypes_e eCfgFileType, cfg_handle_s* psHandle_inout)
+{
+    int     errorCode = PAS_SUCCESS ;
+    char*   pFileBuffer = NULL ;
+    int     iFileSize = persadmin_get_file_size(filePathname) ;
+    if(iFileSize > 0)
+    {
+        pFileBuffer = (char*)malloc(iFileSize + 1) ; /* 1 because json_tokener_parse() expects a '\0' ending string */
+        if(NULL != pFileBuffer)
+        {
+            *(pFileBuffer + iFileSize) = '\0' ; /* add string terminator in the last byte */
         }
         else
         {
-            persadmin_priv_cfg_json_parse(jvalue);
+            errorCode = PAS_FAILURE_OUT_OF_MEMORY ;
         }
     }
-}
-#endif
+    else
+    {
+        if(0 == iFileSize)
+        {
+            /* 0 size is also an error */
+            errorCode = PAS_FAILURE_INVALID_FORMAT;
+        }
+        else
+        {
+            errorCode = iFileSize ;
+        }
+    }
 
+    if(PAS_SUCCESS == errorCode)
+    {
+        /* read the file's content into pFileBuffer */
+        FILE *pFile = fopen(filePathname, "rb") ;
+        if(NULL != pFile)
+        {
+            if(iFileSize == fread(pFileBuffer, 1, iFileSize, pFile))
+            {
+                psHandle_inout->sJsonHandle.pJsonObj = json_tokener_parse(pFileBuffer);
+                if(NULL != psHandle_inout)
+                {
+                    psHandle_inout->eCfgFileType = eCfgFileType ;
+                    psHandle_inout->bIsAssigned = true ;
+                }
+                else
+                {
+                    errorCode = PAS_FAILURE ; /* not sure what to return */
+                }
+            }
+            else
+            {
+                errorCode = PAS_FAILURE ; /* not sure what to return */
+            }
+        }
+        else
+        {
+            errorCode = PAS_FAILURE ;
+        }
+
+        if(NULL != pFile)
+        {
+            fclose(pFile);
+        }
+
+    }
+
+    if(NULL != pFileBuffer)
+    {
+        free(pFileBuffer) ;
+    }
+
+    return errorCode ;
+}
+
+static int cfg_priv_json_close_internal_handle(cfg_handle_s* psHandle_inout)
+{
+    int     errorCode = PAS_SUCCESS ;
+
+    json_object_put(psHandle_inout->sJsonHandle.pJsonObj) ;
+    psHandle_inout->sJsonHandle.pJsonObj = NULL ;
+    psHandle_inout->bIsAssigned = false ;
+
+    return errorCode ;
+}

@@ -6,6 +6,7 @@
 * Copyright (C) 2012 Continental Automotive Systems, Inc.
 *
 * Author: Ionut.Ieremie@continental-corporation.com
+*         Petrica.Manoila@continental-corporation.com
 *
 * Interface: private - common functionality for files/folder manipulation
 *
@@ -17,7 +18,8 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author    Version  Reason
-* 2013.02.07 uidu0250  1.0.0.0	CSP_WZ#1280:  Added persadmin_check_for_same_file_content to check for identical file content
+* 2014.09.29 uidu0250  1.0.1.0  CSP_WZ#8463:  Added persadmin_get_file_size
+* 2013.02.07 uidu0250  1.0.0.0  CSP_WZ#1280:  Added persadmin_check_for_same_file_content to check for identical file content
 * 2012.11.16 uidv2833  1.0.0.0  CSP_WZ#1280:  persadmin_delete_folder and persadmin_delete_file return the number of bytes deleted
 * 2012.11.15 uidl9757  1.0.0.0  CSP_WZ#1280:  Some extensions:
                                 - persadmin_copy_folder and persadmin_copy_file return the number of bytes copied
@@ -62,6 +64,11 @@ sint_t persadmin_get_filename(pstr_t filePath, pstr_t fileName_out, sint_t size)
 */
 sint_t persadmin_get_file_extension(pstr_t filePath, pstr_t fileExtension_out, sint_t size);
 
+/*
+* get the size of the file
+* returns size of the file, or a negative value in case of error
+*/
+sint_t persadmin_get_file_size(pconststr_t pathname) ;
 
 /*
 * filePath can be absolute or relative

@@ -5,6 +5,7 @@
 * Copyright (C) 2012 Continental Automotive Systems, Inc.
 *
 * Author: Ionut.Ieremie@continental-corporation.com
+*         Petrica.Manoila@continental-corporation.com
 *
 * Interface: protected - Access to configuration files (json, xml)   
 *
@@ -14,6 +15,7 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
+* 2014.09.29 uidu0250  1.0.1.0  Changed param. name for persAdmCfgExcGetExceptionForResource from resource to resourceID
 * 2013.03.25 uidl9757  1.0.0.0  Created
 *
 **********************************************************************************************************************/
@@ -327,7 +329,7 @@ signed int persAdmCfgExcGetFoldersList(signed int handlerExceptionsFile, char* l
  *
  * \return 0 for success, or negative value for error (\ref PERSADM_CFG_ERROR_CODES_DEFINES)
  */
-signed int persAdmCfgExcGetExceptionForResource(signed int handlerExceptionsFile, char* resource, PersAdminCfgInstallExceptions_e* peException_out) ;
+signed int persAdmCfgExcGetExceptionForResource(signed int handlerExceptionsFile, char* resourceID, PersAdminCfgInstallExceptions_e* peException_out) ;
 
 /***********************************************************************************************************************************
 *********************************************** Group content related **************************************************************
