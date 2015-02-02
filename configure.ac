@@ -114,7 +114,8 @@ PKG_CHECK_MODULES([DLT], [automotive-dlt >= 2.2.0])
 PKG_CHECK_MODULES([ZLIB], [zlib >= 1.2.5])		
 PKG_CHECK_MODULES([ARCHIVELIB], [libarchive >= 3.0.4])	
 PKG_CHECK_MODULES([PERSCOMMON], [libperscommon >= 1.0.1])
-PKG_CHECK_MODULES([JSON], [json >= 0.9])
+PKG_CHECK_MODULES(JSON, [ json-c >= 0.11 ], [],
+       [PKG_CHECK_MODULES(JSON, [ json >= 0.9 ])])
 PKG_CHECK_MODULES([NSM], [node-state-manager])
 PKG_CHECK_MODULES([SYSTEMD], [libsystemd-daemon >= 37 ])
 
