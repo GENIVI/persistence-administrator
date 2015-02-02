@@ -117,7 +117,8 @@ PKG_CHECK_MODULES([PERSCOMMON], [libperscommon >= 1.0.1])
 PKG_CHECK_MODULES(JSON, [ json-c >= 0.11 ], [],
        [PKG_CHECK_MODULES(JSON, [ json >= 0.9 ])])
 PKG_CHECK_MODULES([NSM], [node-state-manager])
-PKG_CHECK_MODULES([SYSTEMD], [libsystemd-daemon >= 37 ])
+PKG_CHECK_MODULES(SYSTEMD, [libsystemd >= 209 ], [],
+       [PKG_CHECK_MODULES(SYSTEMD, [ libsystemd-daemon >= 37 ])])
 
 AC_SUBST(DEPS_CFLAGS)
 AC_SUBST(DEPS_LIBS)
