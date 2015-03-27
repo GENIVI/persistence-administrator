@@ -26,6 +26,9 @@
  *  2012.07.14 G.Sagnes  1.0.0.0  Initial version of the interface
  *
  ******************************************************************************/
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** \defgroup GEN_PERS_ADMINSERVICE_INTERFACE API document
  *  \{
@@ -201,6 +204,9 @@ long persAdminUserDataDelete(unsigned int user_no, unsigned int seat_no);
 
 long persAdminDataRestore(PersASSelectionType_e type, PersASDefaultSource_e defaultSource, 
                                           const char* applicationID, unsigned int user_no, unsigned int seat_no);
+#ifdef __cplusplus
+}
+#endif
 
 
 /** \} */ /* End of API */
