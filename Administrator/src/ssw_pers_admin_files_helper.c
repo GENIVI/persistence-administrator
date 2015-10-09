@@ -11,11 +11,12 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2014.02.03 uidl9757           CSP_WZ#8463:  Added persadmin_get_file_size()
-* 2013.05.30 uidl9757           CSP_WZ#12188: Rework persadmin_get_folder_size()
-* 2013.02.07 uidu0250           CSP_WZ#2220:  Added persadmin_check_for_same_file_content to check for identical file content
-* 2012.11.16 uidv2833           CSP_WZ#1280:  persadmin_delete_folder and persadmin_delete_file return the number of bytes deleted
-* 2012.11.15 uidl9757           CSP_WZ#1280:  Some extensions:
+* 2015.10.09 Cosmin Cernat      Bug 295:  In persadmin_create_symbolic_link() if the symlink already exists, delete it before creating it.
+* 2014.02.03 Ionut Ieremie      CSP_WZ#8463:  Added persadmin_get_file_size()
+* 2013.05.30 Ionut Ieremie      CSP_WZ#12188: Rework persadmin_get_folder_size()
+* 2013.02.07 Petrica Manoila    CSP_WZ#2220:  Added persadmin_check_for_same_file_content to check for identical file content
+* 2012.11.16 Alin Liteanu       CSP_WZ#1280:  persadmin_delete_folder and persadmin_delete_file return the number of bytes deleted
+* 2012.11.15 Ionut Ieremie      CSP_WZ#1280:  Some extensions:
                                     - persadmin_copy_folder and persadmin_copy_file return the number of bytes copied
                                     - added persadmin_check_if_file_exist and persadmin_check_if_file_exist
                                     - fixed some bugs
@@ -451,6 +452,20 @@ sint_t persadmin_create_symbolic_link(pstr_t pathLink, pstr_t pathTarget)
             bEverythingOK = false ;
             (void)snprintf(g_msg, sizeof(g_msg), "persadmin_create_symbolic_link: persadmin_get_folder_path(<%s>) failed ", pathLink) ;
             DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
+        }
+    }
+
+    if(bEverythingOK)
+    {
+        /* if the symlink already exists, delete it */
+        if(0 <= persadmin_check_if_file_exists(pathLink, false))
+        {
+            if(0 > persadmin_delete_file(pathLink))
+            {
+                bEverythingOK = false ;
+                (void)snprintf(g_msg, sizeof(g_msg), ": persadmin_delete_file(%s) failed", pathLink) ;
+                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__), DLT_STRING(g_msg));
+            }
         }
     }
 
