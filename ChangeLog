@@ -1,6 +1,10 @@
 persistence-administrator ChangeLog
 ===================================
 
+Version 1.0.7 13.10.2015
+
+1       Fixed Bug 299 - Link to shared group data is missing
+
 Version 1.0.6 9.10.2015
 ------------------------
 

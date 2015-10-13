@@ -12,16 +12,17 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2014.02.22 uidl9757           CSP_WZ#8795:  cfg_priv_json_open_internal_handle - pFileBuffer needs to end in '\0'
-* 2014.02.21 uidl9757           CSP_WZ#8795:  Improve performance by parsing the JSON files only once (at handle opening)
-* 2013.10.04 uidl9757           CSP_WZ#5962:  Initialisation of Default Value does not work for big key (>63 bytes) 
-* 2013.09.27 uidl9757           CSP_WZ#5781:  Fix memory leakage
-* 2013.09.23 uidl9757           CSP_WZ#5781:  Watchdog timeout of pas-daemon
-* 2013.07.03 uidl9757           CSP_WZ#4576:  Install "custom" keys with correct storage
-* 2013.06.10 uidl9757           CSP_WZ#4285:  Custom plugin's name has to be extracted from value for "storage" tag
-* 2013.04.03 uidl9757           CSP_WZ#3321:  Adapt to persComRct.h version 5.0.0.0
-* 2013.04.02 uidl9757           CSP_WZ#2798:  Fix handling of "customID" and "custom_name"
-* 2013.03.25 uidn3591           CSP_WZ#2798:  Initial version
+* 2015.10.13 Cosmin Cernat      Bug 299:      Fixed error in persAdmCfgExcGetSizeResourcesList()
+* 2014.02.22 Ionut Ieremie      CSP_WZ#8795:  cfg_priv_json_open_internal_handle - pFileBuffer needs to end in '\0'
+* 2014.02.21 Ionut Ieremie      CSP_WZ#8795:  Improve performance by parsing the JSON files only once (at handle opening)
+* 2013.10.04 Ionut Ieremie      CSP_WZ#5962:  Initialisation of Default Value does not work for big key (>63 bytes)
+* 2013.09.27 Ionut Ieremie      CSP_WZ#5781:  Fix memory leakage
+* 2013.09.23 Ionut Ieremie      CSP_WZ#5781:  Watchdog timeout of pas-daemon
+* 2013.07.03 Ionut Ieremie      CSP_WZ#4576:  Install "custom" keys with correct storage
+* 2013.06.10 Ionut Ieremie      CSP_WZ#4285:  Custom plugin's name has to be extracted from value for "storage" tag
+* 2013.04.03 Ionut Ieremie      CSP_WZ#3321:  Adapt to persComRct.h version 5.0.0.0
+* 2013.04.02 Ionut Ieremie      CSP_WZ#2798:  Fix handling of "customID" and "custom_name"
+* 2013.03.25 Ana Chisca         CSP_WZ#2798:  Initial version
 *
 **********************************************************************************************************************/
 
@@ -701,7 +702,7 @@ signed int persAdmCfgGroupContentGetSizeMembersList(signed int handlerGroupConte
     signed int  siResult    = PAS_SUCCESS;
 
     siResult = cfg_priv_handle_check_validity(handlerGroupContent, PersAdminCfgFileType_GroupContent) ;
-    if(PAS_SUCCESS == siResult)
+    if(PAS_SUCCESS != siResult)
     {
         DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
                 DLT_STRING(" - invalid input parameters"));
