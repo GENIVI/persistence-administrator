@@ -12,7 +12,8 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2015.10.13 Cosmin Cernat      Bug 299:      Fixed error in persAdmCfgExcGetSizeResourcesList()
+* 2015.10.13 Cosmin Cernat      Takeover fix for Bug 299 from Continental git branch
+* 2015.10.13 Cosmin Cernat      Bug 299:      Fixed error in persAdmCfgGroupContentGetSizeMembersList()
 * 2014.02.22 Ionut Ieremie      CSP_WZ#8795:  cfg_priv_json_open_internal_handle - pFileBuffer needs to end in '\0'
 * 2014.02.21 Ionut Ieremie      CSP_WZ#8795:  Improve performance by parsing the JSON files only once (at handle opening)
 * 2013.10.04 Ionut Ieremie      CSP_WZ#5962:  Initialisation of Default Value does not work for big key (>63 bytes)
@@ -702,19 +703,18 @@ signed int persAdmCfgGroupContentGetSizeMembersList(signed int handlerGroupConte
     signed int  siResult    = PAS_SUCCESS;
 
     siResult = cfg_priv_handle_check_validity(handlerGroupContent, PersAdminCfgFileType_GroupContent) ;
-    if(PAS_SUCCESS != siResult)
-    {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
-                DLT_STRING(" - invalid input parameters"));
-        siResult = PAS_FAILURE_INVALID_PARAMETER;
-    }
 
     if(PAS_SUCCESS == siResult)
     {
         /* get size */
         siResult = cfg_priv_json_parse_get_keys_all_size(g_sHandles[handlerGroupContent].sJsonHandle.pJsonObj);
     }
-
+    else
+    {
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                DLT_STRING(" - invalid input parameters"));
+        siResult = PAS_FAILURE_INVALID_PARAMETER;
+    }
     /* return size */
     return siResult;
 
