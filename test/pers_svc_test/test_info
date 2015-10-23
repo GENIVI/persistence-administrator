@@ -1,0 +1,35 @@
+1. Copy the files (WebTool export samples)
+
+    - persistence-administrator\test\pers_svc_test\webtool_export\resource1.tar.gz
+
+    - persistence-administrator\test\pers_svc_test\webtool_export\resource2.tar.gz
+
+   to "/tmp/PAS/"
+
+
+2. Create folder /Data/mnt-wt/
+   $: mkdir /Data/mnt-wt/
+
+
+3. Create folder /Data/mnt-c/ and bind it to /Data/mnt-wt/
+
+   $:mkdir /Data/mnt-c/
+   $:mount --bind /Data/mnt-c/ /Data/mnt-wt/
+
+
+4. Start the Persistence Administrator Service:
+
+   $:/usr/bin/pers_admin_svc
+
+
+
+5. Launch the unit test for Persistence Administrator Service:
+
+   $:/usr/bin/pers_admin_test_framework
+
+
+6. No negative results should appear in the console
+
+
+
+

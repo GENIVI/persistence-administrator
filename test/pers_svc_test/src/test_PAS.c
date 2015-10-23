@@ -10,12 +10,14 @@
 * License, v. 2.0. If a copy of the MPL was not distributed with this
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
-* Date       Author             Reason
-  2013.04.15 uidu0250 			CSP_WZ#3424:  Add IF extension for "restore to default"
-  2013.01.24 uidu0250           CSP_WZ#2246:  Added additional test cases for persAdminDataBackupRecovery
-  2012.12.11 uidu0250           CSP_WZ#1280:  Added test cases for persAdminDataBackupRecovery
-  2012.11.23 uidn3591, uidv2833 CSP_WZ#1280:  Added test cases for persAdminDataBackupCreate & persAdminUserDataDelete
-  2012.11.21 uidl9757           CSP_WZ#1280:  Created (only framework and a dummy test case)
+* Date       Author                   Reason
+  2015.10.20 Cosmin Cernat            Fixed buffer overflow issue.
+                                      Extension of the function persadmin_serialize_data() call with handover of the buffer with its size
+  2013.04.15 Petrica Manoila          CSP_WZ#3424:  Add IF extension for "restore to default"
+  2013.01.24 Petrica Manoila          CSP_WZ#2246:  Added additional test cases for persAdminDataBackupRecovery
+  2012.12.11 Petrica Manoila          CSP_WZ#1280:  Added test cases for persAdminDataBackupRecovery
+  2012.11.23 Ana Chisca, Alin Liteanu CSP_WZ#1280:  Added test cases for persAdminDataBackupCreate & persAdminUserDataDelete
+  2012.11.21 Ionut Ieremie            CSP_WZ#1280:  Created (only framework and a dummy test case)
 *
 **********************************************************************************************************************/
 
@@ -1084,7 +1086,7 @@ static bool_t ResetReferenceData(void) ;
 static bool_t CreateFileWithData(pstr_t filePath, pstr_t data, sint_t dataSize) ;
 static bool_t ExecuteTestCase(testcase_s* psTestCase) ;
 
-static sint_t persadmin_serialize_data(PersistenceConfigurationKey_s pc, char* buffer) ;
+static sint_t persadmin_serialize_data(PersistenceConfigurationKey_s pc, char* buffer, int size) ;
 
 static bool_t CreateFileWithData(pstr_t filePath, pstr_t data, sint_t dataSize)
 {
@@ -1162,7 +1164,7 @@ bool_t InitDataFolder(dataInit_s* psDataInit)
                 for(i = 0 ; i < psDataInit->noEntriesRctInitTab ; i++)
                 {
                     str_t buffer[64] ;
-                    persadmin_serialize_data(psDataInit->RctInitTab[i].sRctEntry, buffer) ;
+                    persadmin_serialize_data(psDataInit->RctInitTab[i].sRctEntry, buffer, sizeof(buffer)) ;
                     psDataInit->RctInitTab[i].sRctEntry.type = 
                         psDataInit->RctInitTab[i].bIsKey ? PersistenceResourceType_key : PersistenceResourceType_file ;
 
@@ -1572,10 +1574,10 @@ static bool_t CheckExpectedDataKeyLocalDB(expected_key_data_localDB_s* pExpected
 }
 
 /* copied here from PCL */
-static sint_t persadmin_serialize_data(PersistenceConfigurationKey_s pc, char* buffer)
+static sint_t persadmin_serialize_data(PersistenceConfigurationKey_s pc, char* buffer, int size)
 {
    sint_t rval = 0;
-   rval = snprintf(buffer, 128, "%d %d %d %s",
+   rval = snprintf(buffer, size, "%d %d %d %s",
                                                pc.policy, pc.storage, pc.max_size,
                                                pc.reponsible);
 
@@ -1596,8 +1598,8 @@ static bool_t CheckExpectedDataKeyRCT(expected_key_data_RCT_s* pExpectedData)
     {
         if(sizeof(PersistenceConfigurationKey_s) == persComRctRead(rctHandler, pExpectedData->key, &sFoundConfig))
         {
-            persadmin_serialize_data(sFoundConfig, serializedFound) ;
-            persadmin_serialize_data(pExpectedData->sExpectedConfig, serializedExpected) ;
+            persadmin_serialize_data(sFoundConfig, serializedFound, sizeof(serializedFound)) ;
+            persadmin_serialize_data(pExpectedData->sExpectedConfig, serializedExpected, sizeof(serializedExpected)) ;
             sprintf(g_msg, "Found <%s> in %s :: config=<%s>",
                 pExpectedData->key, pExpectedData->dbPath, serializedFound) ;
             DLT_LOG(testPersAdminDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg)); 
