@@ -11,14 +11,15 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2013-09-17 uidu0250			CSP_WZ#5633:  Wait for NSM to start before registration.
-* 2013-03-09 uidu0250			CSP_WZ#4480:  Added persadmin_QuitDBusMainLoop function
-* 2013-04-04 uidu0250			CSP_WZ#2739:  Moved PAS<->PCL communication to common part under PersCommonIPC.
-* 2013.03.26 uidu0250			CSP_WZ#3171:  Update PAS registration to NSM
-* 2013.02.15 uidu0250	        CSP_WZ#8849:  Modified PAS<->PCL communication interface
-* 2013.02.04 uidu0250	        CSP_WZ#2211:  Rework for QAC compliancy
-* 2012.11.28 uidu0250	        CSP_WZ#1280:  Updated implementation according to the updated org.genivi.persistence.admin interface
-* 2012.11.13 uidu0250           CSP_WZ#1280:  Initial version
+* 2016-06-02 Cosmin Cernat      Bugzilla Bug 437:  Used glib for watchdog re-triggering
+* 2013-09-17 Petrica Manoila    CSP_WZ#5633:       Wait for NSM to start before registration.
+* 2013-03-09 Petrica Manoila    CSP_WZ#4480:       Added persadmin_QuitDBusMainLoop function
+* 2013-04-04 Petrica Manoila    CSP_WZ#2739:       Moved PAS<->PCL communication to common part under PersCommonIPC.
+* 2013.03.26 Petrica Manoila    CSP_WZ#3171:       Update PAS registration to NSM
+* 2013.02.15 Petrica Manoila    CSP_WZ#8849:       Modified PAS<->PCL communication interface
+* 2013.02.04 Petrica Manoila    CSP_WZ#2211:       Rework for QAC compliancy
+* 2012.11.28 Petrica Manoila    CSP_WZ#1280:       Updated implementation according to the updated org.genivi.persistence.admin interface
+* 2012.11.13 Petrica Manoila    CSP_WZ#1280:       Initial version
 *
 **********************************************************************************************************************/ 
 
@@ -28,6 +29,7 @@
 #include <gio/gio.h>
 #include <pthread.h>
 #include <dlt.h>
+#include <systemd/sd-daemon.h>        /* Systemd wdog    */
 
 #include "persComErrors.h"
 
@@ -44,7 +46,10 @@
 *
 **********************************************************************************************************************/
 
-#define		PAS_SHUTDOWN_TIMEOUT				60000	/* ms */
+#define        ONE_SEC_IN_US                             ((uint64_t)1000000)                   /* microseconds */
+#define        ONE_SEC_IN_MS                             (uint64_t)(1000)                      /* ms */
+#define        PAS_WATCHDOG_TIMEOUT_DEFAULT_VALUE_US    ((uint64_t)(5 * ONE_SEC_IN_US))        /* microseconds */
+#define        PAS_SHUTDOWN_TIMEOUT_MS                             (60 * ONE_SEC_IN_MS)        /* 60 sec */
 
 /**********************************************************************************************************************
 *
@@ -53,13 +58,13 @@
 **********************************************************************************************************************/
 DLT_IMPORT_CONTEXT(persAdminSvcDLTCtx);
 
-static GMainLoop          						*g_pMainLoop          		= NIL;
-static GDBusConnection    						*g_pBusConnection     		= NIL;
-static NodeStateLifeCycleConsumerSkeleton		*g_pNSLCSkeleton			= NIL;
-static NodeStateConsumerProxy					*g_pNSCProxy				= NIL;
+static GMainLoop                                 *g_pMainLoop                = NIL;
+static GDBusConnection                           *g_pBusConnection           = NIL;
+static NodeStateLifeCycleConsumerSkeleton        *g_pNSLCSkeleton            = NIL;
+static NodeStateConsumerProxy                    *g_pNSCProxy                = NIL;
 
-static volatile bool_t							g_bDBusConnInit				= false;
-static bool_t									g_bRegisteredToNSM			= false;	/* registration to NSM status */
+static volatile bool_t                            g_bDBusConnInit            = false;
+static bool_t                                     g_bRegisteredToNSM         = false;    /* registration to NSM status */
 
 
 /**********************************************************************************************************************
@@ -68,21 +73,36 @@ static bool_t									g_bRegisteredToNSM			= false;	/* registration to NSM statu
 *
 **********************************************************************************************************************/
 
-static void 	OnBusAcquired_cb(	GDBusConnection *connection, const gchar     *name, gpointer user_data);
-static void 	OnNameAcquired_cb(	GDBusConnection *connection, const gchar     *name, gpointer user_data);
-static void 	OnNameLost_cb(	GDBusConnection *connection, const gchar     *name, gpointer     user_data);
-static void 	OnNameAppeared(	GDBusConnection *connection, const gchar 	*name, const gchar 	*name_owner, gpointer 	user_data);
+static void OnBusAcquired_cb(    GDBusConnection *connection, const gchar     *name, gpointer user_data);
+static void OnNameAcquired_cb(    GDBusConnection *connection, const gchar     *name, gpointer user_data);
+static void OnNameLost_cb(    GDBusConnection *connection, const gchar     *name, gpointer     user_data);
+static void OnNameAppeared(    GDBusConnection *connection, const gchar     *name, const gchar     *name_owner, gpointer     user_data);
 
 
-/* LifecycleRequest */
-static gboolean OnHandleLifecycleRequest (  NodeStateLifeCycleConsumer 	*object,
-											GDBusMethodInvocation 		*invocation,
-											guint 						arg_Request,
-											guint 						arg_RequestId);
+/* LifecycleRequest DBus handler - signature based on generated code */
+static gboolean OnHandleLifecycleRequest(NodeStateLifeCycleConsumer   *object,
+                                         GDBusMethodInvocation        *invocation,
+                                         guint                         arg_Request,
+                                         guint                         arg_RequestId);
 
-/* ExportNSMConsumerIF */
-static bool_t		ExportNSMConsumerIF(GDBusConnection    						*connection);
+/* Export NSM Consumer IF on DBus */
+static bool_t persadmin_ExportNSMConsumerIF(GDBusConnection *connection);
 
+/**
+ * \brief  Get re-trigger rate from environment variable (from .service file)
+ *
+ * \return re-trigger rate (in seconds)
+ **/
+static uint32_t persadmin_GetWdogRetriggerRate(void);
+
+/**
+ * \brief Performs WDOG re-triggering based on the value defined
+ *
+ * \param user_data : unused, can be NIL
+ *
+ * \return TRUE if successfulls, FALSE otherwise
+ */
+static gboolean persadmin_WDogRetriggerCB(gpointer user_data);
 
 
 /**********************************************************************************************************************
@@ -97,23 +117,23 @@ static bool_t		ExportNSMConsumerIF(GDBusConnection    						*connection);
 * \return void
 *
 **********************************************************************************************************************/
-static void OnBusAcquired_cb(	GDBusConnection *connection,
-								const gchar     *name,
-								gpointer         user_data)
+static void OnBusAcquired_cb(GDBusConnection *connection,
+                             const gchar     *name,
+                             gpointer         user_data)
 {
-	bool_t	bRetVal;
+    bool_t    bRetVal;
 
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully connected to D-Bus."));
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully connected to D-Bus."));
 
-	/* Store the connection. */
-	g_pBusConnection = connection;
+    /* Store the connection. */
+    g_pBusConnection = connection;
 
-	/* Export the org.genivi.NodeStateManager.LifeCycleConsumer interface over DBus trough the PAS object */
-	bRetVal = ExportNSMConsumerIF(connection);
-	if(true == bRetVal)
-	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully connected to D-Bus and exported object."));
-	}
+    /* Export the org.genivi.NodeStateManager.LifeCycleConsumer interface over DBus trough the PAS object */
+    bRetVal = persadmin_ExportNSMConsumerIF(connection);
+    if(true == bRetVal)
+    {
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully connected to D-Bus and exported object."));
+    }
 }
 
 
@@ -130,15 +150,25 @@ static void OnBusAcquired_cb(	GDBusConnection *connection,
 *
 **********************************************************************************************************************/
 
-static void OnNameAcquired_cb(	GDBusConnection *connection,
-        						const gchar     *name,
-        						gpointer         user_data)
+static void OnNameAcquired_cb(GDBusConnection *connection,
+                              const gchar     *name,
+                              gpointer         user_data)
 {
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, 	DLT_STRING("Successfully obtained D-Bus name:");
-												DLT_STRING(name));
+    uint32_t u32RetriggerRate;
 
-	/* DBus connection initialized */
-	g_bDBusConnInit = true;
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("Successfully obtained D-Bus name:");
+                                                DLT_STRING(name));
+
+    /* Get watchdog retrigger rate */
+    u32RetriggerRate = persadmin_GetWdogRetriggerRate();
+
+    /* Add WDOG re-triggering callback */
+    g_timeout_add(    u32RetriggerRate * ONE_SEC_IN_MS,
+                    &persadmin_WDogRetriggerCB,
+                    NIL);
+
+    /* DBus connection initialized */
+    g_bDBusConnInit = true;
 }
 
 
@@ -156,28 +186,28 @@ static void OnNameAcquired_cb(	GDBusConnection *connection,
 * \return void
 *
 **********************************************************************************************************************/
-static void OnNameLost_cb(	GDBusConnection *connection,
-							const gchar     *name,
-							gpointer         user_data )
+static void OnNameLost_cb(GDBusConnection *connection,
+                          const gchar     *name,
+                          gpointer         user_data )
 {
-	if(connection == NIL)
-	{
-		/* Error: the connection could not be established. */
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING("Failed to establish D-Bus connection."));
-	}
-	else
-	{
-		/* Error: connection established, but name not obtained. This might be a second instance of the application */
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, 	DLT_STRING("Failed to obtain bus name ");
-													DLT_STRING(name);
-													DLT_STRING("."));
-	}
+    if(connection == NIL)
+    {
+        /* Error: the connection could not be established. */
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING("Failed to establish D-Bus connection."));
+    }
+    else
+    {
+        /* Error: connection established, but name not obtained. This might be a second instance of the application */
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,     DLT_STRING("Failed to obtain bus name ");
+                                                    DLT_STRING(name);
+                                                    DLT_STRING("."));
+    }
 
-	/* In both cases leave the main loop. */
-	g_main_loop_quit(g_pMainLoop);
+    /* In both cases leave the main loop. */
+    g_main_loop_quit(g_pMainLoop);
 
-	/* DBus connection lost */
-	g_bDBusConnInit = false;
+    /* DBus connection lost */
+    g_bDBusConnInit = false;
 }
 
 
@@ -193,71 +223,72 @@ static void OnNameLost_cb(	GDBusConnection *connection,
 * \return void
 *
 **********************************************************************************************************************/
-static void OnNameAppeared(	GDBusConnection *connection,
-                            const gchar 	*name,
-                            const gchar 	*name_owner,
-                            gpointer 		user_data )
+static void OnNameAppeared(GDBusConnection *connection,
+                           const gchar     *name,
+                           const gchar     *name_owner,
+                           gpointer         user_data )
 {
-	GError				*pError 		= NIL;
-	gboolean			gbRetVal;
-	gint				gErrorCode		= NsmErrorStatus_NotSet;
+    GError                *pError         = NIL;
+    gboolean            gbRetVal;
+    gint                gErrorCode        = NsmErrorStatus_NotSet;
 
-	if(false == g_bRegisteredToNSM)
-	{
-		/* Register to NSM as shutdown client */
-		g_pNSCProxy = NIL;
-		g_pNSCProxy = (NodeStateConsumerProxy *) node_state_consumer_proxy_new_sync(g_pBusConnection,
-																					G_DBUS_PROXY_FLAGS_NONE,
-																					NSM_BUS_NAME,
-																					NSM_CONSUMER_OBJECT,
-																					NIL,
-																					&pError);
-		if(NIL == g_pNSCProxy)
-		{
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG, 	DLT_STRING("Failed to create proxy for NSC. Error :"),
-														DLT_STRING(pError->message));
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING("Failed to register to NSM as shutdown client."));
-			g_error_free (pError);
-		}
-		else
-		{
-			/* Synchronous call to "RegisterShutdownClient" */
-			gbRetVal = node_state_consumer_call_register_shutdown_client_sync(	(NodeStateConsumer *)g_pNSCProxy,
-																				PERSISTENCE_ADMIN_SVC_BUS_NAME,
-																				PERSISTENCE_ADMIN_SVC_OBJ_PATH,
-																				NSM_SHUTDOWNTYPE_NORMAL|NSM_SHUTDOWNTYPE_FAST,
-																				PAS_SHUTDOWN_TIMEOUT,
-																				&gErrorCode,
-																				NIL,
-																				&pError);
-			if(FALSE == gbRetVal)
-			{
-				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG, 	DLT_STRING("RegisterShutdownClient call failed. Error :"),
-															DLT_STRING(pError->message));
-				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING("Failed to register to NSM as shutdown client."));
+    if(false == g_bRegisteredToNSM)
+    {
+        /* Register to NSM as shutdown client */
+        g_pNSCProxy = NIL;
+        g_pNSCProxy = (NodeStateConsumerProxy *) node_state_consumer_proxy_new_sync(g_pBusConnection,
+                                                                                    G_DBUS_PROXY_FLAGS_NONE,
+                                                                                    NSM_BUS_NAME,
+                                                                                    NSM_CONSUMER_OBJECT,
+                                                                                    NIL,
+                                                                                    &pError);
+        if(NIL == g_pNSCProxy)
+        {
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,     DLT_STRING("Failed to create proxy for NSC. Error :"),
+                                                        DLT_STRING(pError->message));
 
-				g_error_free (pError);
-				g_object_unref(g_pNSCProxy);
-				g_pNSCProxy = NIL;
-			}
-			else
-			{
-				if(NsmErrorStatus_Ok != gErrorCode)
-				{
-					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, 	DLT_STRING("Failed to register to NSM as shutdown client. Error code :"),
-																DLT_INT(gErrorCode));
-					g_object_unref(g_pNSCProxy);
-					g_pNSCProxy = NIL;
-				}
-				else
-				{
-					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully registered to NSM as shutdown client."));
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,     DLT_STRING("Failed to register to NSM as shutdown client."));
+            g_error_free (pError);
+        }
+        else
+        {
+            /* Synchronous call to "RegisterShutdownClient" */
+            gbRetVal = node_state_consumer_call_register_shutdown_client_sync(    (NodeStateConsumer *)g_pNSCProxy,
+                                                                                PERSISTENCE_ADMIN_SVC_BUS_NAME,
+                                                                                PERSISTENCE_ADMIN_SVC_OBJ_PATH,
+                                                                                NSM_SHUTDOWNTYPE_NORMAL|NSM_SHUTDOWNTYPE_FAST,
+                                                                                PAS_SHUTDOWN_TIMEOUT_MS,
+                                                                                &gErrorCode,
+                                                                                NIL,
+                                                                                &pError);
+            if(FALSE == gbRetVal)
+            {
+                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,     DLT_STRING("RegisterShutdownClient call failed. Error :"),
+                                                            DLT_STRING(pError->message));
+                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING("Failed to register to NSM as shutdown client."));
 
-					g_bRegisteredToNSM = true;
-				}
-			}
-		}
-	}
+                g_error_free (pError);
+                g_object_unref(g_pNSCProxy);
+                g_pNSCProxy = NIL;
+            }
+            else
+            {
+                if(NsmErrorStatus_Ok != gErrorCode)
+                {
+                    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,     DLT_STRING("Failed to register to NSM as shutdown client. Error code :"),
+                                                                DLT_INT(gErrorCode));
+                    g_object_unref(g_pNSCProxy);
+                    g_pNSCProxy = NIL;
+                }
+                else
+                {
+                    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("Successfully registered to NSM as shutdown client."));
+
+                    g_bRegisteredToNSM = true;
+                }
+            }
+        }
+    }
 }
 
 /**********************************************************************************************************************
@@ -266,54 +297,54 @@ static void OnNameAppeared(	GDBusConnection *connection,
 * Signature based on generated code.
 *
 **********************************************************************************************************************/
-static gboolean OnHandleLifecycleRequest (  NodeStateLifeCycleConsumer 	*object,
-											GDBusMethodInvocation 		*invocation,
-											guint 						arg_Request,
-											guint 						arg_RequestId)
+static gboolean OnHandleLifecycleRequest(NodeStateLifeCycleConsumer   *object,
+                                         GDBusMethodInvocation        *invocation,
+                                         guint                         arg_Request,
+                                         guint                         arg_RequestId)
 {
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, 	DLT_STRING("Received NSM shutdown notification."));
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("Received NSM shutdown notification."));
 
-	/* send a NsmErrorStatus_ResponsePending response and wait for PAS to
-	 * finish any operation in progress */
-	node_state_life_cycle_consumer_complete_lifecycle_request(	object,
-																invocation,
-																NsmErrorStatus_ResponsePending);
-
-
-	if( (0 != (NSM_SHUTDOWNTYPE_NORMAL & arg_Request)) ||
-		(0 != (NSM_SHUTDOWNTYPE_FAST & arg_Request)))
-	{
-		/* set shutdown state and wait for the current operation to finish*/
-		/* Any other PAS request is denied after this point
-		 * (unless a cancel shutdown notification is received)
-		 */
-		(void)persadmin_set_shutdown_state(true);
-	}
-	else
-	{
-		if(0 != (NSM_SHUTDOWNTYPE_RUNUP & arg_Request))
-		{
-			(void)persadmin_set_shutdown_state(false);
-		}
-		else
-		{
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_WARN, 	DLT_STRING("Invalid NSM notification received:"),
-														DLT_UINT(arg_Request));
-		}
-	}
+    /* send a NsmErrorStatus_ResponsePending response and wait for PAS to
+     * finish any operation in progress */
+    node_state_life_cycle_consumer_complete_lifecycle_request( object,
+                                                               invocation,
+                                                               NsmErrorStatus_ResponsePending);
 
 
-	/* Notify NSM that the request was finished  */
-	node_state_consumer_call_lifecycle_request_complete((NodeStateConsumer *)g_pNSCProxy,
-														arg_RequestId,
-														NsmErrorStatus_Ok,
-														NIL,
-														NIL,
-														NIL);
+    if( (0 != (NSM_SHUTDOWNTYPE_NORMAL & arg_Request)) ||
+        (0 != (NSM_SHUTDOWNTYPE_FAST & arg_Request)))
+    {
+        /* set shutdown state and wait for the current operation to finish*/
+        /* Any other PAS request is denied after this point
+         * (unless a cancel shutdown notification is received)
+         */
+        (void)persadmin_set_shutdown_state(true);
+    }
+    else
+    {
+        if(0 != (NSM_SHUTDOWNTYPE_RUNUP & arg_Request))
+        {
+            (void)persadmin_set_shutdown_state(false);
+        }
+        else
+        {
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_WARN,     DLT_STRING("Invalid NSM notification received:"),
+                                                        DLT_UINT(arg_Request));
+        }
+    }
 
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, 	DLT_STRING("Finished preparing for shutdown."));
 
-	return (TRUE);
+    /* Notify NSM that the request was finished  */
+    node_state_consumer_call_lifecycle_request_complete((NodeStateConsumer *)g_pNSCProxy,
+                                                        arg_RequestId,
+                                                        NsmErrorStatus_Ok,
+                                                        NIL,
+                                                        NIL,
+                                                        NIL);
+
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("Finished preparing for shutdown."));
+
+    return (TRUE);
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
 
 
@@ -327,29 +358,81 @@ static gboolean OnHandleLifecycleRequest (  NodeStateLifeCycleConsumer 	*object,
 * \return true if successful, false otherwise
 *
 **********************************************************************************************************************/
-static bool_t		ExportNSMConsumerIF(GDBusConnection    						*connection)
+static bool_t persadmin_ExportNSMConsumerIF(GDBusConnection *connection)
 {
-	GError *pError = NIL;
+    GError *pError = NIL;
 
-	/* Create object to offer on the DBus (for NSMConsumer) */
-	g_pNSLCSkeleton			= (NodeStateLifeCycleConsumerSkeleton*) node_state_life_cycle_consumer_skeleton_new();
+    /* Create object to offer on the DBus (for NSMConsumer) */
+    g_pNSLCSkeleton            = (NodeStateLifeCycleConsumerSkeleton*) node_state_life_cycle_consumer_skeleton_new();
 
-	(void)g_signal_connect(g_pNSLCSkeleton, "handle-lifecycle-request", G_CALLBACK(&OnHandleLifecycleRequest), NIL);
+    (void)g_signal_connect(g_pNSLCSkeleton, "handle-lifecycle-request", G_CALLBACK(&OnHandleLifecycleRequest), NIL);
 
-	/* Attach interface to the object and export it */
-	if(FALSE == g_dbus_interface_skeleton_export(	G_DBUS_INTERFACE_SKELETON(g_pNSLCSkeleton),
-													g_pBusConnection,
-													PERSISTENCE_ADMIN_SVC_OBJ_PATH,
-													&pError))
-	{
-		/* Error: NSM Consumer object could not be exported. */
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, 	DLT_STRING("Failed to export LifeCycleConsumer interface. Error :"),
-													DLT_STRING(pError->message));
-		g_error_free(pError);
-		return false;
-	}
+    /* Attach interface to the object and export it */
+    if(FALSE == g_dbus_interface_skeleton_export(    G_DBUS_INTERFACE_SKELETON(g_pNSLCSkeleton),
+                                                    g_pBusConnection,
+                                                    PERSISTENCE_ADMIN_SVC_OBJ_PATH,
+                                                    &pError))
+    {
+        /* Error: NSM Consumer object could not be exported. */
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,     DLT_STRING("Failed to export LifeCycleConsumer interface. Error :"),
+                                                    DLT_STRING(pError->message));
+        g_error_free(pError);
+        return false;
+    }
 
-	return true;
+    return true;
+}
+
+
+static uint32_t persadmin_GetWdogRetriggerRate(void)
+{
+    const char    *sWdogUSec       = NIL;
+    uint64_t       u64WdogUSec     = 0;
+
+    sWdogUSec = getenv("WATCHDOG_USEC");
+    if(NIL == sWdogUSec)
+    {
+        /* use default watchdog re-trigger rate */
+        u64WdogUSec = PAS_WATCHDOG_TIMEOUT_DEFAULT_VALUE_US;
+
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,    DLT_STRING("Using default watchdog re-trigger rate :");
+                                                    DLT_UINT64(u64WdogUSec / 1000);
+                                                    DLT_STRING("ms."));
+    }
+    else
+    {
+        u64WdogUSec = strtoul(sWdogUSec, NULL, 10);
+
+        /* The min. valid value for systemd is 1 s => WATCHDOG_USEC at least needs to contain 1.000.000 us */
+        if(u64WdogUSec < ONE_SEC_IN_US)
+        {
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,     DLT_STRING("Error: Invalid WDOG config: WATCHDOG_USEC:");
+                                                        DLT_STRING(sWdogUSec);
+                                                        DLT_STRING(".Using default watchdog re-trigger rate :");
+                                                        DLT_UINT32(PAS_WATCHDOG_TIMEOUT_DEFAULT_VALUE_US / 1000);
+                                                        DLT_STRING("ms"));
+
+            u64WdogUSec = PAS_WATCHDOG_TIMEOUT_DEFAULT_VALUE_US;
+        }
+        else
+        {
+            u64WdogUSec /= 2;
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("WDOG retrigger rate [ms]:");
+                                                        DLT_UINT32(u64WdogUSec/1000));
+        }
+    }
+
+    return (uint32_t)(u64WdogUSec / ONE_SEC_IN_US);
+}
+
+
+static gboolean persadmin_WDogRetriggerCB(gpointer user_data)
+{
+    sd_notify(0, "WATCHDOG=1");
+
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("Triggered systemd WDOG"));
+
+    return (TRUE);
 }
 
 
@@ -360,63 +443,64 @@ static bool_t		ExportNSMConsumerIF(GDBusConnection    						*connection)
  */
 void persadmin_RunDBusMainLoop(void)
 {
-	uint32_t				u32ConnectionId;
-	guint 					watcherId;
-	GBusNameWatcherFlags 	flags =  G_BUS_NAME_WATCHER_FLAGS_NONE;
+    uint32_t                u32ConnectionId;
+    guint                     watcherId;
 
-	/* Initialize GLib */
-	g_type_init();			/* deprecated. Since GLib 2.36, the type system is initialized automatically and this function does nothing.*/
+    GBusNameWatcherFlags     flags =  G_BUS_NAME_WATCHER_FLAGS_NONE;
 
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, 	DLT_STRING("Creating a new DBus connection..."));
+    /* Initialize GLib */
+    g_type_init();            /* deprecated. Since GLib 2.36, the type system is initialized automatically and this function does nothing.*/
 
-	/* Connect to the D-Bus. Obtain a bus name to offer PAS objects */
-	u32ConnectionId = g_bus_own_name( PERSISTENCE_ADMIN_SVC_BUS_TYPE
-									, PERSISTENCE_ADMIN_SVC_BUS_NAME
-									, G_BUS_NAME_OWNER_FLAGS_NONE
-									, &OnBusAcquired_cb
-									, &OnNameAcquired_cb
-									, &OnNameLost_cb
-									, NIL
-									, NIL);
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,     DLT_STRING("Creating a new DBus connection..."));
 
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("D-Bus connection Id: "), DLT_UINT32(u32ConnectionId));
+    /* Connect to the D-Bus. Obtain a bus name to offer PAS objects */
+    u32ConnectionId = g_bus_own_name( PERSISTENCE_ADMIN_SVC_BUS_TYPE
+                                    , PERSISTENCE_ADMIN_SVC_BUS_NAME
+                                    , G_BUS_NAME_OWNER_FLAGS_NONE
+                                    , &OnBusAcquired_cb
+                                    , &OnNameAcquired_cb
+                                    , &OnNameLost_cb
+                                    , NIL
+                                    , NIL);
 
-	/* Watch the NSM bus name */
-	watcherId = g_bus_watch_name (	PERSISTENCE_ADMIN_SVC_BUS_TYPE, /* NSM uses the same bus type as PAS  */
-									NSM_BUS_NAME,
-									flags,
-									&OnNameAppeared,
-									NIL,
-									NIL,
-									NIL);
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING("D-Bus connection Id: "), DLT_UINT32(u32ConnectionId));
 
-	/* Create the main loop */
-	g_pMainLoop = g_main_loop_new(NIL, FALSE);
+    /* Watch the NSM bus name */
+    watcherId = g_bus_watch_name (    PERSISTENCE_ADMIN_SVC_BUS_TYPE, /* NSM uses the same bus type as PAS  */
+                                    NSM_BUS_NAME,
+                                    flags,
+                                    &OnNameAppeared,
+                                    NIL,
+                                    NIL,
+                                    NIL);
 
-	/* The main loop is only canceled if the Node is completely shut down or the D-Bus connection fails */
-	g_main_loop_run(g_pMainLoop);
+    /* Create the main loop */
+    g_pMainLoop = g_main_loop_new(NIL, FALSE);
 
-	g_bus_unwatch_name (watcherId);
+    /* The main loop is only canceled if the Node is completely shut down or the D-Bus connection fails */
+    g_main_loop_run(g_pMainLoop);
 
-	/* If the main loop returned, clean up. Release bus name and main loop */
-	g_bus_unown_name(u32ConnectionId);
+    g_bus_unwatch_name (watcherId);
 
-	g_main_loop_unref(g_pMainLoop);
-	g_pMainLoop = NIL;
+    /* If the main loop returned, clean up. Release bus name and main loop */
+    g_bus_unown_name(u32ConnectionId);
 
-	/* Release the (created) skeleton object */
-	if(NIL != g_pNSLCSkeleton)
-	{
-		g_object_unref(g_pNSLCSkeleton);
-		g_pNSLCSkeleton = NIL;
-	}
+    g_main_loop_unref(g_pMainLoop);
+    g_pMainLoop = NIL;
 
-	/* Release the (created) proxy object */
-	if(NIL != g_pNSCProxy)
-	{
-		g_object_unref(g_pNSCProxy);
-		g_pNSCProxy = NIL;
-	}
+    /* Release the (created) skeleton object */
+    if(NIL != g_pNSLCSkeleton)
+    {
+        g_object_unref(g_pNSLCSkeleton);
+        g_pNSLCSkeleton = NIL;
+    }
+
+    /* Release the (created) proxy object */
+    if(NIL != g_pNSCProxy)
+    {
+        g_object_unref(g_pNSCProxy);
+        g_pNSCProxy = NIL;
+    }
 }
 
 
@@ -427,14 +511,14 @@ void persadmin_RunDBusMainLoop(void)
  */
 void persadmin_QuitDBusMainLoop(void)
 {
-	if(true == g_bDBusConnInit)
-	{
-		if(NIL != g_pMainLoop)
-		{
-			g_main_loop_quit(g_pMainLoop);
-			g_bDBusConnInit = false;
-		}
-	}
+    if(true == g_bDBusConnInit)
+    {
+        if(NIL != g_pMainLoop)
+        {
+            g_main_loop_quit(g_pMainLoop);
+            g_bDBusConnInit = false;
+        }
+    }
 }
 
 
@@ -443,8 +527,8 @@ void persadmin_QuitDBusMainLoop(void)
  *
  * \return true if registered to NSM, false otherwise
  */
-bool_t 	persadmin_IsRegisteredToNSM(void)
+bool_t persadmin_IsRegisteredToNSM(void)
 {
-	return g_bRegisteredToNSM;
+    return g_bRegisteredToNSM;
 }
 

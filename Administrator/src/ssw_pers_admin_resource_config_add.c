@@ -11,18 +11,19 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2013.10.23 uidl9757           CSP_WZ#6300:  Installation of the default values in context of the custom keys not working
-* 2013.09.27 uidl9757           CSP_WZ#5781:  Fix memory leakage
-* 2013.09.23 uidl9757           CSP_WZ#5781:  Watchdog timeout of pas-daemon
-* 2013.06.07 uidl9757           CSP_WZ#4260:  Variable sContext of type pas_cfg_instFoldCtx_s is not initialized.
-* 2013.04.12 uidl9757           CSP_WZ#3450:  Fix SCC warnings
-* 2013.04.02 uidl9757           CSP_WZ#2798:  Fix some of review findings
-* 2013.03.21 uidl9757           CSP_WZ#2798:  Complete rework to allow configuration based on json files
-* 2012.12.13 uidl9757           CSP_WZ#1280:  Update according to new detailed description:
-                                              https://workspace1.conti.de/content/00002483/Team%20Documents/01%20Technical%20Documentation
-                                              /04%20OIP/20_SW_Packages/03_Persistence/Administration_Service
-                                              /Configure%20and%20initialize%20data%20and%20policy%20for%20new%20application%20-%20questions.doc
-* 2012.11.29 uidl9757           CSP_WZ#1280:  Created
+* 2016-06-02 Cosmin Cernat      Bugzilla Bug 437:  Moved WDOG re-triggering to glib loop
+* 2013.10.23 Ionut Ieremie      CSP_WZ#6300:       Installation of the default values in context of the custom keys not working
+* 2013.09.27 Ionut Ieremie      CSP_WZ#5781:       Fix memory leakage
+* 2013.09.23 Ionut Ieremie      CSP_WZ#5781:       Watchdog timeout of pas-daemon
+* 2013.06.07 Ionut Ieremie      CSP_WZ#4260:       Variable sContext of type pas_cfg_instFoldCtx_s is not initialized.
+* 2013.04.12 Ionut Ieremie      CSP_WZ#3450:       Fix SCC warnings
+* 2013.04.02 Ionut Ieremie      CSP_WZ#2798:       Fix some of review findings
+* 2013.03.21 Ionut Ieremie      CSP_WZ#2798:       Complete rework to allow configuration based on json files
+* 2012.12.13 Ionut Ieremie      CSP_WZ#1280:       Update according to new detailed description:
+                                                   https://workspace1.conti.de/content/00002483/Team%20Documents/01%20Technical%20Documentation
+                                                   /04%20OIP/20_SW_Packages/03_Persistence/Administration_Service
+                                                   /Configure%20and%20initialize%20data%20and%20policy%20for%20new%20application%20-%20questions.doc
+* 2012.11.29 Ionut Ieremie      CSP_WZ#1280:       Created
 *
 **********************************************************************************************************************/ 
 
@@ -497,9 +498,6 @@ static sint_t pas_conf_configureDataForPublic(void)
 
     sint_t hRules = -1 ;
 
-    /* retrigger watchdog */
-    persadmin_RetriggerWatchdog();
-
     /* initialize */
     (void)memset(&sContext, 0x0, sizeof(sContext));
 
@@ -791,9 +789,6 @@ static sint_t pas_conf_configureDataForGroup(   constpstr_t                 grou
 
     str_t destInstallFolder[PERSADMIN_MAX_PATH_LENGHT] ;
     str_t srcInstallFolder[PERSADMIN_MAX_PATH_LENGHT] ;
-
-    /* retrigger watchdog */
-    persadmin_RetriggerWatchdog();
         
     if(     (PersAdminCfgInstallRules_Uninstall == eInstallRule)
         ||  (PersAdminCfgInstallRules_NewInstall == eInstallRule))
@@ -1474,9 +1469,6 @@ static sint_t pas_conf_configureDataForApp(constpstr_t appID, PersAdminCfgInstal
     pas_cfg_instFoldCtx_s   sContext = {0} ;
     str_t                   destInstallFolder[PERSADMIN_MAX_PATH_LENGHT] ;
     str_t                   srcInstallFolder[PERSADMIN_MAX_PATH_LENGHT] ;
-
-    /* retrigger watchdog */
-    persadmin_RetriggerWatchdog();
 
     if(     (PersAdminCfgInstallRules_Uninstall == eInstallRule)
         ||  (PersAdminCfgInstallRules_NewInstall == eInstallRule))
@@ -2775,15 +2767,8 @@ static sint_t pas_conf_updateRctForInstallFolder(pas_cfg_instFoldCtx_s* const   
         /* first remove the obsolete resources */
         sint_t iPosInList = 0 ;
         pstr_t pCurrentResource = NIL ;
-        sint_t iCurrentNumberOfResourceProcessed = 0 ;
         while(bEverythingOK && (iPosInList < psInstallFolderCtx->sLists.sObsoleteResources.sizeOfList))
         {
-            if(0 == (++iCurrentNumberOfResourceProcessed)%15) /* retrigger watchdog once for every 15 resources processed*/
-            {
-                /* retrigger watchdog */
-                persadmin_RetriggerWatchdog();
-            }
-        
             pCurrentResource = psInstallFolderCtx->sLists.sObsoleteResources.pList + iPosInList ; /*DG C8MR2R-MISRA-C:2004 Rule 17.4-SSW_Administrator_0006*/
             if(0 <= persComRctDelete(hDestRCT, pCurrentResource))
             {
@@ -2809,17 +2794,10 @@ static sint_t pas_conf_updateRctForInstallFolder(pas_cfg_instFoldCtx_s* const   
         PersistenceConfigurationKey_s   sOldConfig = {PersistencePolicy_na} ;
         PersistenceConfigurationKey_s   sNewConfig = {PersistencePolicy_na};
         bool_t                          bIsNewRsource = false ; 
-        sint_t iCurrentNumberOfResourceProcessed = 0 ;
         while(bEverythingOK && (iPosInList < psInstallFolderCtx->sLists.sSrcRCT.sizeOfList))
         {
             bIsNewRsource = false ;
             pCurrentResource = psInstallFolderCtx->sLists.sSrcRCT.pList + iPosInList ; /*DG C8MR2R-MISRA-C:2004 Rule 17.4-SSW_Administrator_0006*/
-
-            if(0 == (++iCurrentNumberOfResourceProcessed)%15) /* retrigger watchdog once for every 15 resources processed*/
-            {
-                /* retrigger watchdog */
-                persadmin_RetriggerWatchdog();
-            }
             
             if(0 <= persAdmCfgRctRead(hSrcRCT, pCurrentResource, &sNewConfig))
             {
@@ -2888,7 +2866,6 @@ static sint_t pas_conf_configureForDefault(pas_cfg_instFoldCtx_s* const psInstal
     {
         sint_t                          iPosInListOfResources = 0 ;
         pstr_t                          pCurrentResourceID = NIL ;
-        sint_t                          iCurrentNumberOfResourceProcessed = 0 ;
 
         /* for each resource in the list:
          *   - find out which kind of configuration to apply (if any)
@@ -2897,12 +2874,6 @@ static sint_t pas_conf_configureForDefault(pas_cfg_instFoldCtx_s* const psInstal
         {
             bool_t                  bSkipCurrentResource = false ;
             pas_cfg_configTypes_e   eConfigTypeForResource = pas_cfg_configType_dontTouch ;
-
-            if(0 == (++iCurrentNumberOfResourceProcessed)%15) /* retrigger watchdog once for every 15 resources processed*/
-            {
-                /* retrigger watchdog */
-                persadmin_RetriggerWatchdog();
-            }
             
             pCurrentResourceID = psLists->sSrcRCT.pList + iPosInListOfResources ; /*DG C8MR2R-MISRA-C:2004 Rule 17.4-SSW_Administrator_0006*/
             

@@ -1,21 +1,33 @@
+#######################################################################################################################
+#
+# Copyright (C) 2016 Continental Automotive Systems, Inc.
+#
+# Author: cosmin.cernat@continental-corporation.com
+#
+#######################################################################################################################
+
 persistence-administrator ChangeLog
 ===================================
 
+Version 1.0.8 02.06.2016
+
+1. Fixed issue http://bugs.genivi.org/show_bug.cgi?id=437
+
 Version 1.0.7 13.10.2015
 
-1       Fixed Bug 299 - Link to shared group data is missing
+1. Fixed issue http://bugs.genivi.org/show_bug.cgi?id=299
 
 Version 1.0.6 9.10.2015
 ------------------------
 
-1.      Fixed Bug 295 - further calls of persadmin_tool install return with exit code: -1310719
+1. Fixed issue http://bugs.genivi.org/show_bug.cgi?id=295
 
 Version 1.0.4 16.09.2014
 ------------------------
 
-1.	Fixed format for the access lib version info.
+1. Fixed format for the access lib version info.
 
 Version 1.0.3 12.09.2014
 ------------------------
 
-1.	Fixed issue http://bugs.genivi.org/show_bug.cgi?id=263
+1. Fixed issue http://bugs.genivi.org/show_bug.cgi?id=263

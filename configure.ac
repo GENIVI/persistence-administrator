@@ -2,7 +2,7 @@
 #
 # Copyright (C) 2012 Continental Automotive Systems, Inc.
 #
-# Author: Ana.Chisca@continental-corporation.com
+# Author: cosmin.cernat@continental-corporation.com
 #
 # Configure template for the Persistence Administration Service
 #
@@ -18,7 +18,7 @@ dnl **************************************************************************
 dnl *** First, define all of the version numbers up front                  ***
 dnl *** In particular, this allows the version macro to be used in AC_INIT ***
 dnl **************************************************************************
-m4_define([PERS_PACKAGE_VERSION_S],[1.0.7])
+m4_define([PERS_PACKAGE_VERSION_S],[1.0.8])
 m4_define([PERS_ADMINACCESSLIB_VERSION_N],[1000000])
 
 dnl ***************************
