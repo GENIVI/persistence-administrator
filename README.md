@@ -9,7 +9,7 @@ Master location for GENIVI PersistenceAdministrationService
 http://git.projects.genivi.org/persistence/persistence-administration-service.git
 
 # License and Copyright 
-Copyright 2014 (C) Continental 
+Copyright (C) 2012 Continental Automotive Systems, Inc.
 
 For licensing information see the COPYING file, distributed along with this project. This project is licensed under the Mozilla Public License 2.0
 
