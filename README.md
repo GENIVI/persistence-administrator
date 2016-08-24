@@ -1,5 +1,4 @@
 #GENIVI PersistenceAdministrationService (PAS) README
-=====================================
 
 This is the official source of the GENIVI PersistenceAdministrationService. At present, all
 relevant documentation for this project is available in the GENIVI wiki on:
@@ -12,9 +11,7 @@ http://git.projects.genivi.org/persistence/persistence-administration-service.gi
 # License and Copyright 
 Copyright 2014 (C) Continental 
 
-
 For licensing information see the COPYING file, distributed along with this project. This project is licensed under the Mozilla Public License 2.0
-
 
 # Build Dependencies and Instructions
 
