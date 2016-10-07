@@ -662,79 +662,88 @@ static long persadmin_restore_non_user_shared_data(	pstr_t             	backupDa
 	/* <backupDataPath>/Data/mnt-c/shared/group */
 	(void)snprintf(pGroupRootSourcePath, sizeof(pGroupRootSourcePath), "%s%s", backupDataPath, PERS_ORG_SHARED_GROUP_CACHE_PATH);
 
-
-	/* Check all groups */
-	listBuffSize = persadmin_list_folder_get_size(  pGroupRootSourcePath,
-													PersadminFilterFolders,
-													false );
-	if(listBuffSize < SUCCESS_CODE)
+	/* check if folder exists; */
+	if( 0 == persadmin_check_if_file_exists(pGroupRootSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_list_folder_get_size call failed with error code:"),
-													DLT_INT(listBuffSize));
-		return GENERIC_ERROR_CODE;
-	}
-	if(listBuffSize > 0)
-	{
-		pStrList = NIL;
-		pStrList = (pstr_t)malloc((uint_t)listBuffSize); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-		if(NIL == pStrList)
+		/* Check all groups */
+		listBuffSize = persadmin_list_folder_get_size(  pGroupRootSourcePath,
+														PersadminFilterFolders,
+														false );
+		if(listBuffSize < SUCCESS_CODE)
 		{
 			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-														DLT_STRING("Error allocating memory for list of folders."));
+														DLT_STRING("persadmin_list_folder_get_size call failed with error code:"),
+														DLT_INT(listBuffSize));
 			return GENERIC_ERROR_CODE;
 		}
-		(void)memset(pStrList, 0, (uint_t)listBuffSize);
-
-		outBuffSize = persadmin_list_folder(  	pGroupRootSourcePath,
-												pStrList,
-												listBuffSize,
-												PersadminFilterFolders,
-												false);
-		if(outBuffSize < SUCCESS_CODE)
+		if(listBuffSize > 0)
 		{
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-														DLT_STRING("Error obtaining the list of folders."));
-			free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
 			pStrList = NIL;
-			return GENERIC_ERROR_CODE;
-		}
-
-		pItemName = pStrList;
-		while(listBuffSize > 0)
-		{
-			if(0 == strlen(pItemName))
+			pStrList = (pstr_t)malloc((uint_t)listBuffSize); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+			if(NIL == pStrList)
 			{
 				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("Invalid folder item found."));
-				break;
+															DLT_STRING("Error allocating memory for list of folders."));
+				return GENERIC_ERROR_CODE;
 			}
+			(void)memset(pStrList, 0, (uint_t)listBuffSize);
 
-			/* Restore the node content for every group */
-
-			/* shared/group/<group_id> */
-			(void)snprintf(pExtendedAppId, sizeof(pExtendedAppId), "%s/%s/%s", PERS_ORG_SHARED_FOLDER_NAME, PERS_ORG_GROUP_FOLDER_NAME, pItemName);
-
-			retVal = persadmin_restore_appl_node(	backupDataPath,
-													pExtendedAppId);
-			if(retVal < 0)
+			outBuffSize = persadmin_list_folder(  	pGroupRootSourcePath,
+													pStrList,
+													listBuffSize,
+													PersadminFilterFolders,
+													false);
+			if(outBuffSize < SUCCESS_CODE)
 			{
 				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("persadmin_restore_appl_node call failed with error code:"),
-															DLT_INT(retVal));
-				free(pStrList);/*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+															DLT_STRING("Error obtaining the list of folders."));
+				free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
 				pStrList = NIL;
 				return GENERIC_ERROR_CODE;
 			}
 
-			bytesRestored += retVal;
+			pItemName = pStrList;
+			while(listBuffSize > 0)
+			{
+				if(0 == strlen(pItemName))
+				{
+					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																DLT_STRING("Invalid folder item found."));
+					break;
+				}
 
-			listBuffSize -= ((sint_t)strlen(pItemName) + 1) * (sint_t)sizeof(*pItemName);
-			pItemName += (strlen(pItemName) + 1); // MISRA-C:2004 Rule 17.4 Performing pointer arithmetic. - Rule currently not accepted
+				/* Restore the node content for every group */
+
+				/* shared/group/<group_id> */
+				(void)snprintf(pExtendedAppId, sizeof(pExtendedAppId), "%s/%s/%s", PERS_ORG_SHARED_FOLDER_NAME, PERS_ORG_GROUP_FOLDER_NAME, pItemName);
+
+				retVal = persadmin_restore_appl_node(	backupDataPath,
+														pExtendedAppId);
+				if(retVal < 0)
+				{
+					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																DLT_STRING("persadmin_restore_appl_node call failed with error code:"),
+																DLT_INT(retVal));
+					free(pStrList);/*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+					pStrList = NIL;
+					return GENERIC_ERROR_CODE;
+				}
+
+				bytesRestored += retVal;
+
+				listBuffSize -= ((sint_t)strlen(pItemName) + 1) * (sint_t)sizeof(*pItemName);
+				pItemName += (strlen(pItemName) + 1); // MISRA-C:2004 Rule 17.4 Performing pointer arithmetic. - Rule currently not accepted
+			}
+
+			free(pStrList);/*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+			pStrList = NIL;
 		}
-
-		free(pStrList);/*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-		pStrList = NIL;
+	}
+	else
+	{
+		/* some info; */
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,	DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_non_user_shared_data -"),
+													DLT_STRING(pGroupRootSourcePath), DLT_STRING("does not exist"));
 	}
 
 	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
@@ -787,77 +796,86 @@ static long persadmin_restore_user_public_files(pstr_t             		backupDataP
 	/* /Data/mnt-c/shared/public */
 	(void)snprintf(pPublicDestPath, sizeof(pPublicDestPath), "%s", PERS_ORG_SHARED_PUBLIC_CACHE_PATH);
 
-
-	if(false == persadmin_restore_check_RCT_compatibility(pPublicSourcePath, pPublicDestPath))
+	/* check if folder exists; */
+	if( 0 == persadmin_check_if_file_exists(pPublicSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("Incompatible public RCT files:"),
-													DLT_STRING(pPublicSourcePath),
-													DLT_STRING("<->"),
-													DLT_STRING(pPublicDestPath));
-		return GENERIC_ERROR_CODE;
-	}
-
-	/* --- public file/folder restore --- */
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-												DLT_STRING("public file/folder restore..."));
-
-	/* <backupDataPath>/Data/mnt-c/shared/public/user/<user_no>/seat/<seat_no> */
-	(void)snprintf(pUserSourcePath, sizeof(pUserSourcePath), "%s%s", backupDataPath, PERS_ORG_SHARED_PUBLIC_CACHE_PATH);
-	persadmin_restore_set_user_path(pUserSourcePath,
-									sizeof(pUserSourcePath)/sizeof(str_t),
-									user_no,
-									seat_no);
-
-	/* /Data/mnt-c/shared/public/user/<user_no>/seat/<seat_no> */
-	(void)snprintf(pUserDestPath, sizeof(pUserDestPath), "%s", PERS_ORG_SHARED_PUBLIC_CACHE_PATH);
-	persadmin_restore_set_user_path(pUserDestPath,
-									sizeof(pUserDestPath)/sizeof(str_t),
-									user_no,
-									seat_no);
-
-	if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
-	{
-		/* erase user content */
-		retVal = persadmin_delete_folder(pUserDestPath);
-		if(retVal < SUCCESS_CODE)
+		if(false == persadmin_restore_check_RCT_compatibility(pPublicSourcePath, pPublicDestPath))
 		{
 			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-														DLT_STRING("persadmin_delete_folder call failed with error code:"),
-														DLT_INT(retVal));
-		}
-
-		/* copy user content */
-		retVal = persadmin_copy_folder(	pUserSourcePath,
-										pUserDestPath,
-										PersadminFilterAll,
-										true);
-		if(retVal < 0)
-		{
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,	DLT_STRING(LT_HDR),
-														DLT_STRING("persadmin_copy_folder call failed with error code:"),
-														DLT_INT(retVal));
+														DLT_STRING("Incompatible public RCT files:"),
+														DLT_STRING(pPublicSourcePath),
+														DLT_STRING("<->"),
+														DLT_STRING(pPublicDestPath));
 			return GENERIC_ERROR_CODE;
 		}
 
-		bytesRestored += retVal;
-
+		/* --- public file/folder restore --- */
 		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-													DLT_STRING("Restored successfully user public files from"),
-													DLT_STRING(backupDataPath),
-													DLT_STRING("for User:"),
-													DLT_UINT8(user_no),
-													DLT_STRING("for Seat:"),
-													DLT_UINT8(seat_no),
-													DLT_STRING("."),
-													DLT_INT64(bytesRestored),
-													DLT_STRING("bytes restored"));
+													DLT_STRING("public file/folder restore..."));
+
+		/* <backupDataPath>/Data/mnt-c/shared/public/user/<user_no>/seat/<seat_no> */
+		(void)snprintf(pUserSourcePath, sizeof(pUserSourcePath), "%s%s", backupDataPath, PERS_ORG_SHARED_PUBLIC_CACHE_PATH);
+		persadmin_restore_set_user_path(pUserSourcePath,
+										sizeof(pUserSourcePath)/sizeof(str_t),
+										user_no,
+										seat_no);
+
+		/* /Data/mnt-c/shared/public/user/<user_no>/seat/<seat_no> */
+		(void)snprintf(pUserDestPath, sizeof(pUserDestPath), "%s", PERS_ORG_SHARED_PUBLIC_CACHE_PATH);
+		persadmin_restore_set_user_path(pUserDestPath,
+										sizeof(pUserDestPath)/sizeof(str_t),
+										user_no,
+										seat_no);
+
+		if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
+		{
+			/* erase user content */
+			retVal = persadmin_delete_folder(pUserDestPath);
+			if(retVal < SUCCESS_CODE)
+			{
+				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+															DLT_STRING("persadmin_delete_folder call failed with error code:"),
+															DLT_INT(retVal));
+			}
+
+			/* copy user content */
+			retVal = persadmin_copy_folder(	pUserSourcePath,
+											pUserDestPath,
+											PersadminFilterAll,
+											true);
+			if(retVal < 0)
+			{
+				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,	DLT_STRING(LT_HDR),
+															DLT_STRING("persadmin_copy_folder call failed with error code:"),
+															DLT_INT(retVal));
+				return GENERIC_ERROR_CODE;
+			}
+
+			bytesRestored += retVal;
+
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,	DLT_STRING(LT_HDR),
+														DLT_STRING("Restored successfully user public files from"),
+														DLT_STRING(backupDataPath),
+														DLT_STRING("for User:"),
+														DLT_UINT8(user_no),
+														DLT_STRING("for Seat:"),
+														DLT_UINT8(seat_no),
+														DLT_STRING("."),
+														DLT_INT64(bytesRestored),
+														DLT_STRING("bytes restored"));
+		}
+		else
+		{
+			/* some info; */
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_public_files -"),
+										DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
+		}
 	}
 	else
 	{
 		/* some info; */
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_public_files -"),
-									DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,	DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_public_files -"),
+													DLT_STRING(pPublicSourcePath), DLT_STRING("does not exist"));
 	}
 
 	return bytesRestored;
@@ -898,139 +916,149 @@ static long persadmin_restore_user_group_files(	pstr_t             		backupDataP
 	/* <backupDataPath>/Data/mnt-c/shared/group */
 	(void)snprintf(pGroupRootSourcePath, sizeof(pGroupRootSourcePath), "%s%s", backupDataPath, PERS_ORG_SHARED_GROUP_CACHE_PATH);
 
-	/* Check all groups */
-	listBuffSize = persadmin_list_folder_get_size(  pGroupRootSourcePath,
-													PersadminFilterFolders,
-													false );
-	if(listBuffSize < SUCCESS_CODE)
+	/* check if folder exists; */
+	if( 0 == persadmin_check_if_file_exists(pGroupRootSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_list_folder_get_size call failed with error code:"),
-													DLT_INT(listBuffSize));
-		return GENERIC_ERROR_CODE;
-	}
-	if(listBuffSize > 0)
-	{
-		pStrList = NIL;
-		pStrList = (pstr_t)malloc((uint_t)listBuffSize); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-		if(NIL == pStrList)
+		/* Check all groups */
+		listBuffSize = persadmin_list_folder_get_size(  pGroupRootSourcePath,
+														PersadminFilterFolders,
+														false );
+		if(listBuffSize < SUCCESS_CODE)
 		{
 			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-														DLT_STRING("Error allocating memory for list of folders."));
+														DLT_STRING("persadmin_list_folder_get_size call failed with error code:"),
+														DLT_INT(listBuffSize));
 			return GENERIC_ERROR_CODE;
 		}
-		(void)memset(pStrList, 0, (uint_t)listBuffSize);
-
-		outBuffSize = persadmin_list_folder(  	pGroupRootSourcePath,
-												pStrList,
-												listBuffSize,
-												PersadminFilterFolders,
-												false);
-		if(outBuffSize < SUCCESS_CODE)
+		if(listBuffSize > 0)
 		{
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-														DLT_STRING("Error obtaining the list of folders."));
-			free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
 			pStrList = NIL;
-			return GENERIC_ERROR_CODE;
-		}
-
-		pItemName = pStrList;
-		while(listBuffSize > 0)
-		{
-			if(0 == strlen(pItemName))
+			pStrList = (pstr_t)malloc((uint_t)listBuffSize); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+			if(NIL == pStrList)
 			{
 				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("Invalid group name found."));
-				break;
+															DLT_STRING("Error allocating memory for list of folders."));
+				return GENERIC_ERROR_CODE;
 			}
+			(void)memset(pStrList, 0, (uint_t)listBuffSize);
 
-			/* Restore the user content for every group */
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,	DLT_STRING(LT_HDR),
-														DLT_STRING("restore user content for group"),
-														DLT_STRING(pItemName),
-														DLT_STRING(" ..."));
-
-			/* --- group RCT compatibility check --- */
-			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-														DLT_STRING("RCT compatibility check for group"),
-														DLT_STRING(pItemName),
-														DLT_STRING("..."));
-
-			/* <backupDataPath>/Data/mnt-c/shared/group/<group_id> */
-			(void)snprintf(pGroupSourcePath, sizeof(pGroupSourcePath), PAS_SRC_SHARED_GROUP_CACHE_PATH_STRING_FORMAT, backupDataPath, pItemName, "");
-
-			/*/Data/mnt-c/shared/group/<group_id> */
-			(void)snprintf(pGroupDestPath, sizeof(pGroupDestPath), PERS_ORG_SHARED_CACHE_PATH_STRING_FORMAT, pItemName, "");
-
-			if(false == persadmin_restore_check_RCT_compatibility(pGroupSourcePath, pGroupDestPath))
+			outBuffSize = persadmin_list_folder(  	pGroupRootSourcePath,
+													pStrList,
+													listBuffSize,
+													PersadminFilterFolders,
+													false);
+			if(outBuffSize < SUCCESS_CODE)
 			{
 				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("Incompatible group RCT files:"),
-															DLT_STRING(pGroupSourcePath),
-															DLT_STRING("<->"),
-															DLT_STRING(pGroupDestPath));
+															DLT_STRING("Error obtaining the list of folders."));
 				free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
 				pStrList = NIL;
 				return GENERIC_ERROR_CODE;
 			}
 
-			/* <backupDataPath>/Data/mnt-c/shared/group/<group_id>/user/<user_no>/seat/<seat_no> */
-			(void)snprintf(pUserSourcePath, sizeof(pUserSourcePath), PAS_SRC_SHARED_GROUP_CACHE_PATH_STRING_FORMAT, backupDataPath, pItemName, "");
-			persadmin_restore_set_user_path(pUserSourcePath,
-											sizeof(pUserSourcePath) / sizeof(str_t),
-											user_no,
-											seat_no);
-
-			/* /Data/mnt-c/shared/group/<group_id>/user/<user_no>/seat/<seat_no> */
-			(void)snprintf(pUserDestPath, sizeof(pUserDestPath), PERS_ORG_SHARED_CACHE_PATH_STRING_FORMAT, pItemName, "");
-			persadmin_restore_set_user_path(pUserDestPath,
-											sizeof(pUserDestPath) / sizeof(str_t),
-											user_no,
-											seat_no);
-
-			if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
+			pItemName = pStrList;
+			while(listBuffSize > 0)
 			{
-				/* erase user content */
-				retVal = persadmin_delete_folder(pUserDestPath);
-				if(retVal < SUCCESS_CODE)
+				if(0 == strlen(pItemName))
 				{
 					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-																DLT_STRING("persadmin_delete_folder call failed with error code:"),
-																DLT_INT(retVal));
+																DLT_STRING("Invalid group name found."));
+					break;
 				}
 
-				/* copy user content */
-				retVal = persadmin_copy_folder( pUserSourcePath,
-												pUserDestPath,
-												PersadminFilterAll,
-												true);
+				/* Restore the user content for every group */
+				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,	DLT_STRING(LT_HDR),
+															DLT_STRING("restore user content for group"),
+															DLT_STRING(pItemName),
+															DLT_STRING(" ..."));
 
-				if(retVal < 0)
+				/* --- group RCT compatibility check --- */
+				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
+															DLT_STRING("RCT compatibility check for group"),
+															DLT_STRING(pItemName),
+															DLT_STRING("..."));
+
+				/* <backupDataPath>/Data/mnt-c/shared/group/<group_id> */
+				(void)snprintf(pGroupSourcePath, sizeof(pGroupSourcePath), PAS_SRC_SHARED_GROUP_CACHE_PATH_STRING_FORMAT, backupDataPath, pItemName, "");
+
+				/*/Data/mnt-c/shared/group/<group_id> */
+				(void)snprintf(pGroupDestPath, sizeof(pGroupDestPath), PERS_ORG_SHARED_CACHE_PATH_STRING_FORMAT, pItemName, "");
+
+				if(false == persadmin_restore_check_RCT_compatibility(pGroupSourcePath, pGroupDestPath))
 				{
 					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-																DLT_STRING("persadmin_copy_folder call failed with error code:"),
-																DLT_INT(retVal));
+																DLT_STRING("Incompatible group RCT files:"),
+																DLT_STRING(pGroupSourcePath),
+																DLT_STRING("<->"),
+																DLT_STRING(pGroupDestPath));
 					free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
 					pStrList = NIL;
 					return GENERIC_ERROR_CODE;
 				}
 
-				bytesRestored += retVal;
-			}
-			else
-			{
-				/* some info; */
-				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_group_files -"),
-											DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
+				/* <backupDataPath>/Data/mnt-c/shared/group/<group_id>/user/<user_no>/seat/<seat_no> */
+				(void)snprintf(pUserSourcePath, sizeof(pUserSourcePath), PAS_SRC_SHARED_GROUP_CACHE_PATH_STRING_FORMAT, backupDataPath, pItemName, "");
+				persadmin_restore_set_user_path(pUserSourcePath,
+												sizeof(pUserSourcePath) / sizeof(str_t),
+												user_no,
+												seat_no);
+
+				/* /Data/mnt-c/shared/group/<group_id>/user/<user_no>/seat/<seat_no> */
+				(void)snprintf(pUserDestPath, sizeof(pUserDestPath), PERS_ORG_SHARED_CACHE_PATH_STRING_FORMAT, pItemName, "");
+				persadmin_restore_set_user_path(pUserDestPath,
+												sizeof(pUserDestPath) / sizeof(str_t),
+												user_no,
+												seat_no);
+
+				if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
+				{
+					/* erase user content */
+					retVal = persadmin_delete_folder(pUserDestPath);
+					if(retVal < SUCCESS_CODE)
+					{
+						DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																	DLT_STRING("persadmin_delete_folder call failed with error code:"),
+																	DLT_INT(retVal));
+					}
+
+					/* copy user content */
+					retVal = persadmin_copy_folder( pUserSourcePath,
+													pUserDestPath,
+													PersadminFilterAll,
+													true);
+
+					if(retVal < 0)
+					{
+						DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																	DLT_STRING("persadmin_copy_folder call failed with error code:"),
+																	DLT_INT(retVal));
+						free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+						pStrList = NIL;
+						return GENERIC_ERROR_CODE;
+					}
+
+					bytesRestored += retVal;
+				}
+				else
+				{
+					/* some info; */
+					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_group_files -"),
+												DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
+				}
+
+				listBuffSize -= ((sint_t)strlen(pItemName) + 1) * (sint_t)sizeof(*pItemName);
+				pItemName += (strlen(pItemName) + 1); // MISRA-C:2004 Rule 17.4 Performing pointer arithmetic. - Rule currently not accepted
 			}
 
-			listBuffSize -= ((sint_t)strlen(pItemName) + 1) * (sint_t)sizeof(*pItemName);
-			pItemName += (strlen(pItemName) + 1); // MISRA-C:2004 Rule 17.4 Performing pointer arithmetic. - Rule currently not accepted
+			free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+			pStrList = NIL;
 		}
-
-		free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-		pStrList = NIL;
+	}
+	else
+	{
+		/* some info; */
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO,	DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_group_files -"),
+													DLT_STRING(pGroupRootSourcePath), DLT_STRING("does not exist"));
 	}
 
 	if( bytesRestored != 0)
