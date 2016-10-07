@@ -32,6 +32,8 @@
 #include <sys/stat.h>
 #include <mqueue.h>
 #include <semaphore.h>
+#include <limits.h>
+
 
 #include "persistence_admin_service.h"
 #include "ssw_pers_admin_access_lib.h"
@@ -946,7 +948,7 @@ long persAdminUserDataCopy(unsigned int src_user_no, unsigned int src_seat_no, u
     long errorCode = PAS_FAILURE ;
 
     /* check params */
-    if((src_user_no <= 4) && (src_seat_no <= 4) && (dest_user_no <= 4) && (dest_seat_no <= 4))
+    if((src_user_no <= UINT_MAX) && (src_seat_no <= 4) && (dest_user_no <= UINT_MAX) && (dest_seat_no <= 4))
     {
 
     }
@@ -1059,7 +1061,7 @@ long persAdminUserDataDelete(unsigned int user_no, unsigned int seat_no)
     long errorCode = PAS_FAILURE ;
 
     /* check params */
-    if((user_no <= 4) && (seat_no <= 4))
+    if((user_no <= UINT_MAX) && (seat_no <= 4))
     {
 
     }

@@ -33,7 +33,7 @@
 #include "ssw_pers_admin_service.h"
 #include "persComDataOrg.h"
 #include "persComTypes.h"
-
+#include <limits.h>
 
 
 /* L&T context */
@@ -53,7 +53,7 @@ DLT_IMPORT_CONTEXT                      (persAdminSvcDLTCtx)
 #define NAMES_APP_MAX_SIZE              (NAME_APP_MAX_SIZE * 100)
 
 #define IS_VALID_APPL(applicationID)    ((NIL != (applicationID)) && (0 != (*(applicationID))))
-#define IS_VALID_USER(user_no)          ((PERSIST_SELECT_ALL_USERS == (user_no)) || ((1 <= (user_no)) && (4 >= (user_no))))
+#define IS_VALID_USER(user_no)          ((PERSIST_SELECT_ALL_USERS == (user_no)) || ((1 <= (user_no)) && (UINT_MAX >= (user_no))))
 #define IS_VALID_SEAT(seat_no)          ((PERSIST_SELECT_ALL_SEATS == (seat_no)) || ((1 <= (seat_no)) && (4 >= (seat_no))))
 
 const char*                             gSharedPublicRelativePath   = PERS_ORG_SHARED_FOLDER_NAME PERS_ORG_PUBLIC_FOLDER_NAME_;
