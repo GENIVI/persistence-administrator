@@ -470,45 +470,54 @@ static long persadmin_restore_appl_node(pstr_t    backupDataPath,
 	/* /Data/mnt-c/<appId>/node */
 	(void)snprintf(pNodeDestPath, sizeof(pNodeDestPath), gLocalCachePath, appId, gNode);
 
-	/* erase node content */
-	retVal = persadmin_delete_folder(pNodeDestPath);
-	if(retVal < SUCCESS_CODE)
+	if( 0 == persadmin_check_if_file_exists(pNodeSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_delete_folder call failed with error code:"),
-													DLT_INT(retVal),
-													DLT_STRING("for"),
-													DLT_STRING(pNodeDestPath));
+		/* erase node content */
+		retVal = persadmin_delete_folder(pNodeDestPath);
+		if(retVal < SUCCESS_CODE)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_delete_folder call failed with error code:"),
+														DLT_INT(retVal),
+														DLT_STRING("for"),
+														DLT_STRING(pNodeDestPath));
+		}
+
+		/* copy node content */
+		retVal = persadmin_copy_folder(	pNodeSourcePath,
+										pNodeDestPath,
+										PersadminFilterAll,
+										true);
+
+		if(retVal < SUCCESS_CODE)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_copy_folder call failed with error code:"),
+														DLT_INT(retVal),
+														DLT_STRING("for source:"),
+														DLT_STRING(pNodeSourcePath),
+														DLT_STRING("and destination:"),
+														DLT_STRING(pNodeDestPath));
+			return GENERIC_ERROR_CODE;
+		}
+
+		bytesRestored += retVal;
+
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
+													DLT_STRING("Restored successfully node content for:"),
+													DLT_STRING(appId),
+													DLT_STRING("from"),
+													DLT_STRING(backupDataPath),
+													DLT_STRING("."),
+													DLT_INT64(bytesRestored),
+													DLT_STRING("bytes restored."));
 	}
-
-	/* copy node content */
-	retVal = persadmin_copy_folder(	pNodeSourcePath,
-									pNodeDestPath,
-									PersadminFilterAll,
-									true);
-
-	if(retVal < SUCCESS_CODE)
+	else
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_copy_folder call failed with error code:"),
-													DLT_INT(retVal),
-													DLT_STRING("for source:"),
-													DLT_STRING(pNodeSourcePath),
-													DLT_STRING("and destination:"),
-													DLT_STRING(pNodeDestPath));
-		return GENERIC_ERROR_CODE;
+		/* some info; */
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_appl_node -"),
+									DLT_STRING(pNodeSourcePath), DLT_STRING("does not exist"));
 	}
-
-	bytesRestored += retVal;
-
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-												DLT_STRING("Restored successfully node content for:"),
-												DLT_STRING(appId),
-												DLT_STRING("from"),
-												DLT_STRING(backupDataPath),
-												DLT_STRING("."),
-												DLT_INT64(bytesRestored),
-												DLT_STRING("bytes restored."));
 
 	return bytesRestored;
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
@@ -562,48 +571,57 @@ static long persadmin_restore_appl_user(  pstr_t          	backupDataPath,
 									user_no,
 									seat_no);
 
-	/* erase user content */
-	retVal = persadmin_delete_folder(pUserDestPath);
-	if(retVal < SUCCESS_CODE)
+	if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_delete_folder call failed with error code:"),
-													DLT_INT(retVal),
-													DLT_STRING("for"),
-													DLT_STRING(pUserDestPath));
-	}
+		/* erase user content */
+		retVal = persadmin_delete_folder(pUserDestPath);
+		if(retVal < SUCCESS_CODE)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_delete_folder call failed with error code:"),
+														DLT_INT(retVal),
+														DLT_STRING("for"),
+														DLT_STRING(pUserDestPath));
+		}
 
-	/* copy user content */
-	retVal = persadmin_copy_folder( pUserSourcePath,
-									pUserDestPath,
-									PersadminFilterAll,
-									true);
-	if(retVal < SUCCESS_CODE)
-	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_copy_folder call failed with error code:"),
-													DLT_INT(retVal),
+		/* copy user content */
+		retVal = persadmin_copy_folder( pUserSourcePath,
+										pUserDestPath,
+										PersadminFilterAll,
+										true);
+		if(retVal < SUCCESS_CODE)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_copy_folder call failed with error code:"),
+														DLT_INT(retVal),
+														DLT_STRING("from"),
+														DLT_STRING(pUserSourcePath),
+														DLT_STRING("to"),
+														DLT_STRING(pUserDestPath));
+			return GENERIC_ERROR_CODE;
+		}
+
+		bytesRestored += retVal;
+
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
+													DLT_STRING("Restored successfully user content for App:"),
+													DLT_STRING(appId),
+													DLT_STRING("User:"),
+													DLT_UINT8(user_no),
+													DLT_STRING("Seat:"),
+													DLT_UINT8(seat_no),
 													DLT_STRING("from"),
-													DLT_STRING(pUserSourcePath),
-													DLT_STRING("to"),
-													DLT_STRING(pUserDestPath));
-		return GENERIC_ERROR_CODE;
+													DLT_STRING(backupDataPath),
+													DLT_STRING("."),
+													DLT_INT64(bytesRestored),
+													DLT_STRING("bytes restored."));
 	}
-
-	bytesRestored += retVal;
-
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-												DLT_STRING("Restored successfully user content for App:"),
-												DLT_STRING(appId),
-												DLT_STRING("User:"),
-												DLT_UINT8(user_no),
-												DLT_STRING("Seat:"),
-												DLT_UINT8(seat_no),
-												DLT_STRING("from"),
-												DLT_STRING(backupDataPath),
-												DLT_STRING("."),
-												DLT_INT64(bytesRestored),
-												DLT_STRING("bytes restored."));
+	else
+	{
+		/* some info; */
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_appl_user -"),
+									DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
+	}
 
 	return bytesRestored;
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
@@ -798,40 +816,49 @@ static long persadmin_restore_user_public_files(pstr_t             		backupDataP
 									user_no,
 									seat_no);
 
-	/* erase user content */
-	retVal = persadmin_delete_folder(pUserDestPath);
-	if(retVal < SUCCESS_CODE)
+	if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_delete_folder call failed with error code:"),
-													DLT_INT(retVal));
-	}
+		/* erase user content */
+		retVal = persadmin_delete_folder(pUserDestPath);
+		if(retVal < SUCCESS_CODE)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_delete_folder call failed with error code:"),
+														DLT_INT(retVal));
+		}
 
-	/* copy user content */
-	retVal = persadmin_copy_folder(	pUserSourcePath,
-									pUserDestPath,
-									PersadminFilterAll,
-									true);
-	if(retVal < 0)
+		/* copy user content */
+		retVal = persadmin_copy_folder(	pUserSourcePath,
+										pUserDestPath,
+										PersadminFilterAll,
+										true);
+		if(retVal < 0)
+		{
+			DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,	DLT_STRING(LT_HDR),
+														DLT_STRING("persadmin_copy_folder call failed with error code:"),
+														DLT_INT(retVal));
+			return GENERIC_ERROR_CODE;
+		}
+
+		bytesRestored += retVal;
+
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
+													DLT_STRING("Restored successfully user public files from"),
+													DLT_STRING(backupDataPath),
+													DLT_STRING("for User:"),
+													DLT_UINT8(user_no),
+													DLT_STRING("for Seat:"),
+													DLT_UINT8(seat_no),
+													DLT_STRING("."),
+													DLT_INT64(bytesRestored),
+													DLT_STRING("bytes restored"));
+	}
+	else
 	{
-		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,	DLT_STRING(LT_HDR),
-													DLT_STRING("persadmin_copy_folder call failed with error code:"),
-													DLT_INT(retVal));
-		return GENERIC_ERROR_CODE;
+		/* some info; */
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_public_files -"),
+									DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
 	}
-
-	bytesRestored += retVal;
-
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-												DLT_STRING("Restored successfully user public files from"),
-												DLT_STRING(backupDataPath),
-												DLT_STRING("for User:"),
-												DLT_UINT8(user_no),
-												DLT_STRING("for Seat:"),
-												DLT_UINT8(seat_no),
-												DLT_STRING("."),
-												DLT_INT64(bytesRestored),
-												DLT_STRING("bytes restored"));
 
 	return bytesRestored;
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/
@@ -962,32 +989,41 @@ static long persadmin_restore_user_group_files(	pstr_t             		backupDataP
 											user_no,
 											seat_no);
 
-			/* erase user content */
-			retVal = persadmin_delete_folder(pUserDestPath);
-			if(retVal < SUCCESS_CODE)
+			if( 0 == persadmin_check_if_file_exists(pUserSourcePath, true) )
 			{
-				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("persadmin_delete_folder call failed with error code:"),
-															DLT_INT(retVal));
+				/* erase user content */
+				retVal = persadmin_delete_folder(pUserDestPath);
+				if(retVal < SUCCESS_CODE)
+				{
+					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																DLT_STRING("persadmin_delete_folder call failed with error code:"),
+																DLT_INT(retVal));
+				}
+
+				/* copy user content */
+				retVal = persadmin_copy_folder( pUserSourcePath,
+												pUserDestPath,
+												PersadminFilterAll,
+												true);
+
+				if(retVal < 0)
+				{
+					DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
+																DLT_STRING("persadmin_copy_folder call failed with error code:"),
+																DLT_INT(retVal));
+					free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
+					pStrList = NIL;
+					return GENERIC_ERROR_CODE;
+				}
+
+				bytesRestored += retVal;
 			}
-
-			/* copy user content */
-			retVal = persadmin_copy_folder( pUserSourcePath,
-											pUserDestPath,
-											PersadminFilterAll,
-											true);
-
-			if(retVal < 0)
+			else
 			{
-				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR,  DLT_STRING(LT_HDR),
-															DLT_STRING("persadmin_copy_folder call failed with error code:"),
-															DLT_INT(retVal));
-				free(pStrList); /*DG C8MR2R-MISRA-C:2004 Rule 20.4-SSW_Administrator_0002*/
-				pStrList = NIL;
-				return GENERIC_ERROR_CODE;
+				/* some info; */
+				DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_restore_user_group_files -"),
+											DLT_STRING(pUserSourcePath), DLT_STRING("does not exist"));
 			}
-
-			bytesRestored += retVal;
 
 			listBuffSize -= ((sint_t)strlen(pItemName) + 1) * (sint_t)sizeof(*pItemName);
 			pItemName += (strlen(pItemName) + 1); // MISRA-C:2004 Rule 17.4 Performing pointer arithmetic. - Rule currently not accepted
@@ -997,16 +1033,19 @@ static long persadmin_restore_user_group_files(	pstr_t             		backupDataP
 		pStrList = NIL;
 	}
 
-	DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
-												DLT_STRING("Restored successfully user group files from"),
-												DLT_STRING(backupDataPath),
-												DLT_STRING("for User:"),
-												DLT_UINT8(user_no),
-												DLT_STRING("for Seat:"),
-												DLT_UINT8(seat_no),
-												DLT_STRING("."),
-												DLT_INT64(bytesRestored),
-												DLT_STRING("bytes restored"));
+	if( bytesRestored != 0)
+	{
+		DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_DEBUG,  DLT_STRING(LT_HDR),
+													DLT_STRING("Restored successfully user group files from"),
+													DLT_STRING(backupDataPath),
+													DLT_STRING("for User:"),
+													DLT_UINT8(user_no),
+													DLT_STRING("for Seat:"),
+													DLT_UINT8(seat_no),
+													DLT_STRING("."),
+													DLT_INT64(bytesRestored),
+													DLT_STRING("bytes restored"));
+	}
 
 	return bytesRestored;
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/

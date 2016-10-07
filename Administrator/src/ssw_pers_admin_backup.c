@@ -174,25 +174,34 @@ static long persadmin_priv_data_backup_create_all(pstr_t backup_name)
     /* append root path to backup name -> /backup_name/Data; */
     (void)snprintf(pchBckupPathDst, (size_t)s32SizeBckup, "%s%s", backup_name, gRootPath);
 
-    /* TODO: check if folder exists; */
-    /* copy content of source (/Data) to destination (/backup); */
-    sResult = persadmin_copy_folder(gRootPath, pchBckupPathDst, PersadminFilterAll, true);
-    if( 0 > sResult )
+    /* check if folder exists; */
+    if( 0 == persadmin_check_if_file_exists(gRootPath, true) )
     {
-        bCanContinue = false;
-        /* some info; */
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING("persadmin_priv_data_backup_create_all -"), DLT_STRING("persadmin_copy_folder"),
-                            DLT_STRING(gRootPath), DLT_STRING("to"), DLT_STRING(pchBckupPathDst), DLT_STRING("ERR"), DLT_INT(sResult));
+        /* copy content of source (/Data) to destination (/backup); */
+        sResult = persadmin_copy_folder(gRootPath, pchBckupPathDst, PersadminFilterAll, true);
+        if( 0 > sResult )
+        {
+            bCanContinue = false;
+            /* some info; */
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING("persadmin_priv_data_backup_create_all -"), DLT_STRING("persadmin_copy_folder"),
+                                        DLT_STRING(gRootPath), DLT_STRING("to"), DLT_STRING(pchBckupPathDst), DLT_STRING("ERR"), DLT_INT(sResult));
+        }
+        else
+        {
+            /* some info; */
+            DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_priv_data_backup_create_all -"), DLT_STRING("backed up"),
+                                        DLT_STRING(gRootPath), DLT_STRING("to"), DLT_STRING(pchBckupPathDst));
+        }
+
+        /* TODO: filter destination folder of files which do not correspond with the definition in BackupFileList.info; */
+        /* persadmin_priv_filter_folder(); */
     }
     else
     {
         /* some info; */
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_priv_data_backup_create_all -"), DLT_STRING("backed up"),
-                            DLT_STRING(gRootPath), DLT_STRING("to"), DLT_STRING(pchBckupPathDst));
+        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("persadmin_priv_data_backup_create_all -"),
+                                    DLT_STRING(gRootPath), DLT_STRING("does not exist"));
     }
-
-    /* TODO: filter destination folder of files which do not correspond with the definition in BackupFileList.info; */
-    /* persadmin_priv_filter_folder(); */
 
     /* return result; */
     return sResult;
