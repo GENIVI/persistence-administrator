@@ -579,6 +579,47 @@ static sint_t persadmin_copy_subfolders(pstr_t absPathSource, sint_t posInSource
                             }                                                    
                         }
                     }
+					else if(S_ISLNK(sb.st_mode))
+					{
+						char symlinkName[PERSADMIN_MAX_PATH_LENGHT];
+						ssize_t numBytes;
+
+						numBytes = readlink(absPathSource, symlinkName, PERSADMIN_MAX_PATH_LENGHT-1);
+						if(numBytes == -1)
+						{
+							bEverythingOK = false ;
+							(void)snprintf(g_msg, sizeof(g_msg), "persadmin_copy_subfolders: readlink error: errno=<%s>", strerror(errno)) ;
+							DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
+							break ;
+						}
+
+						symlinkName[numBytes] = '\0';
+                        
+						(void)snprintf(g_msg, sizeof(g_msg), "persadmin_copy_subfolders: SymlinkName = %s, absPathDestination = %s)", absPathSource, absPathDestination) ;
+						DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
+
+						if(0 <= persadmin_check_if_file_exists(absPathDestination, false))
+						{      
+							if(-1 == unlink(absPathDestination))
+							{
+								bEverythingOK = false ;
+								(void)snprintf(g_msg, sizeof(g_msg), "persadmin_copy_subfolders: unlink(%s) failed", absPathSource, absPathDestination) ;
+								DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
+								break ;
+							}
+						}
+
+						if(bEverythingOK)
+						{
+							if(symlink(symlinkName, absPathDestination) == -1)
+							{
+								bEverythingOK = false ;
+								(void)snprintf(g_msg, sizeof(g_msg), "persadmin_copy_subfolders: creating symlink failed: errno=<%s>", strerror(errno)) ;
+								DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
+								break ;
+							}
+						}
+					}
                     else
                     {
                         if(bFilterPassed)
