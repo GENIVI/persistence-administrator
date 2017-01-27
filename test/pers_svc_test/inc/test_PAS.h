@@ -11,7 +11,7 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
-* 2013.04.15 uidu0250 			CSP_WZ#3424:  Add IF extension for "restore to default"
+* 2013.04.15 uidu0250           CSP_WZ#3424:  Add IF extension for "restore to default"
 * 2012.11.29 uidv2833           CSP_WZ#1280:  Adapted implementation for the new test framework
 * 2012.11.28 uidl9757           CSP_WZ#1280:  Initial version
 *
@@ -32,10 +32,6 @@ extern "C"
 
 /* needed because of change in PCL (should be removed later) */
 #define TST_DEFAULT_CONTEXT {0xFF, 0xFF, 0xFF}
-#define PERSISTENCE_ADMIN_TF_BUS_TYPE						1 	//G_BUS_TYPE_SYSTEM (see gioenums.h)
-#define PERSISTENCE_ADMIN_TF_BUS_NAME						"org.genivi.persistence.admintestframework"
-#define PERSISTENCE_ADMIN_TF_OBJ_PATH						"/org/genivi/persistence/admintestframework"
-#define PERSISTENCE_ADMIN_TF_IFACE							"org.genivi.persistence.admintestframework"
 
 #define MAX_PATH_SIZE                   ( 256 )
 #define MAX_APPLICATION_NAME_SIZE       (  64 )

@@ -23,7 +23,7 @@ bin_PROGRAMS = pers_admin_test_framework
 #
 
 pers_admin_test_framework_CFLAGS = \
-                            -I $(top_srcdir)/Administrator/inc/private -I $(top_srcdir)/Administrator/inc/public -I inc -I generated \
+                            -I $(top_srcdir)/Administrator/inc/private -I $(top_srcdir)/Administrator/inc/public -I inc \
                             $(DLT_CFLAGS)           \
                             $(GIO_CFLAGS)           \
                             $(GIO_UNIX_CFLAGS)      \
@@ -49,7 +49,6 @@ pers_admin_test_framework_LDADD = \
 
 pers_admin_test_framework_SOURCES = \
                             $(top_srcdir)/Administrator/src/ssw_pers_admin_files_helper.c        \
-                            generated/PasModuleTestGen.c                                         \
                             src/test_PAS.c                                                       \
                             src/test_pas_check_data_after_backup_application.c                   \
                             src/test_pas_check_data_after_backup_create_all.c                    \
@@ -57,7 +56,6 @@ pers_admin_test_framework_SOURCES = \
                             src/test_pas_check_data_after_backup_user2_seat_all.c                \
                             src/test_pas_check_data_after_delete_user2_data.c                    \
                             src/test_pas_check_data_after_reset.c                                \
-                            src/test_PAS_dbus.c                                                  \
                             src/test_pas_import_all.c                                            \
                             src/test_pas_import_app.c                                            \
                             src/test_pas_import_source_content.c                                 \
@@ -77,12 +75,3 @@ pers_admin_test_framework_SOURCES = \
                             src/test_pas_restore_default_User1.c                                 \
                             src/test_pas_restore_default_User2App1.c                             \
                             src/test_pas_restore_default_User2Seat1.c
-
-generated/PasModuleTestGen.c: dbus_specifications/OIPModuleTestPASCodeGeneration.xml
-	mkdir -p generated
-	gdbus-codegen --interface-prefix="org.genivi.persistence." --c-namespace="OipPersistence" --generate-c-code="generated/PasModuleTestGen" dbus_specifications/OIPModuleTestPASCodeGeneration.xml
-
-
-# Delete all generated files on 'make clean'
-CLEANFILES    =  generated/PasModuleTestGen.c          \
-                 generated/PasModuleTestGen.h          
