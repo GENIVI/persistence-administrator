@@ -9,6 +9,17 @@
 persistence-administrator ChangeLog
 ===================================
 
+Version 1.0.9 08.02.2017
+
+1. Add support to handle symbolic links when creating backup
+2. Limitation of user_no to 4 is removed
+3. Set ssw_pers_admin_common.c file formatting to unix
+4. Remove irrelevant functionality from pers_admin_test_framework
+5. Add error checking in recovery process
+6. Error checking in recovery when group/public data is not configured
+7. Handle empty /file and /key directories in database resources configuration
+8. Replace the tabulators by space in Administrator/src/ssw_pers_admin_recovery.c
+
 Version 1.0.8 02.06.2016
 
 1. Fixed issue http://bugs.genivi.org/show_bug.cgi?id=437
