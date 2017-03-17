@@ -11,6 +11,7 @@
 * file, You can obtain one at http://mozilla.org/MPL/2.0/.
 *
 * Date       Author             Reason
+* 2017-01-30 Cosmin Cernat      Improve robustness of pas_conf_getContextInstallFolder function().
 * 2016-06-02 Cosmin Cernat      Bugzilla Bug 437:  Moved WDOG re-triggering to glib loop
 * 2013.10.23 Ionut Ieremie      CSP_WZ#6300:       Installation of the default values in context of the custom keys not working
 * 2013.09.27 Ionut Ieremie      CSP_WZ#5781:       Fix memory leakage
@@ -347,7 +348,7 @@ Helpers
 static bool_t pas_conf_unarchiveResourceFile(constpstr_t resourcePathname) ;
 static bool_t pas_conf_deleteFolderContent(pstr_t folderPathName, PersadminFilterMode_e eFilterMode) ;
 static sint_t pas_conf_filterResourcesList(pstr_t  resourceID, bool_t  bFilterOnlyNonDefault, bool_t  bIsKeyType, pas_conf_listOfItems_s* const psListUnfiltered, pstr_t  pListFiltered_out);
-
+static bool_t pas_conf_createDefaultContentJsonFile(constpstr_t filePath, constpstr_t appName) ;
 
 /******************************************************************************************************
 ********************************   Implementation  ****************************************************
@@ -1600,6 +1601,35 @@ static bool_t pas_conf_removeDataForApp(constpstr_t appID, bool_t bPrepareForNew
 ******************************  Folder (public, group, app) data related *****************************************
 *****************************************************************************************************************/
 
+
+/**
+ * \brief Create json configuration file with default content in given destination.
+ * \param filePath         [in]    path where the file will be created
+ * \param appName          [in]    application name which will be put into json config file
+ * \return true for success, false other way
+ */
+static bool_t pas_conf_createDefaultContentJsonFile(constpstr_t filePath, constpstr_t appName)
+{
+    FILE * pFile;
+    pFile = fopen (filePath,"w");
+    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__), DLT_STRING("Json config file '"),
+        DLT_STRING(filePath), DLT_STRING("' with default configuration has been created."));
+
+    if (pFile != NULL)
+    {
+        fputs("{\n", pFile);
+        char buffer[PERSADMIN_MAX_PATH_LENGHT];
+        sprintf(buffer, "  \"config_appl\": \"%s\",\n", appName);
+        fputs(buffer,pFile);
+        fputs("  \"version\": \"0.1.0\",\n", pFile);
+        fputs("  \"resources\": {}   \n", pFile);
+        fputs("}\n", pFile);
+        fclose(pFile);
+    }
+    return true;
+}
+
+
 /**
  * \brief Get the context for the public/group/app's install folder
  * \param destInstallFolder         [in]    pathname for the destination(install) folder
@@ -1611,7 +1641,10 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
 {
     bool_t  bEverythingOK = true ;
     size_t  iIndex = 0 ;
-
+    
+    pstr_t appName[PERSADMIN_MAX_PATH_LENGHT];
+    persadmin_get_filename(destInstallFolder, appName, PERSADMIN_MAX_PATH_LENGHT);
+    
     /*---------------------------------------------------------------------------------------------------------
                                      get context for destination folder        
      ---------------------------------------------------------------------------------------------------------*/
@@ -1622,15 +1655,15 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
     (void)snprintf(psInstallFolderCtx_inout->sDestContext.sRctDB.pathname,
                 sizeof(psInstallFolderCtx_inout->sDestContext.sRctDB.pathname),
                 "%s/%s", destInstallFolder, PERS_ORG_RCT_NAME) ;
-    psInstallFolderCtx_inout->sDestContext.sRctDB.handler = persComRctOpen(psInstallFolderCtx_inout->sDestContext.sRctDB.pathname, true) ;
+    psInstallFolderCtx_inout->sDestContext.sRctDB.handler = persComRctOpen(psInstallFolderCtx_inout->sDestContext.sRctDB.pathname, true) ;    
     if(psInstallFolderCtx_inout->sDestContext.sRctDB.handler >= 0)
-    {
+    {        
         psInstallFolderCtx_inout->sDestContext.sRctDB.bIsAvailable = true ;
     }
     else
-    {
+    {     
         bEverythingOK = false ;
-    }
+    }    
     (void)snprintf(g_msg, sizeof(g_msg), "%s - persComRctOpen(%s) returned <%d>", 
             __FUNCTION__, psInstallFolderCtx_inout->sDestContext.sRctDB.pathname, psInstallFolderCtx_inout->sDestContext.sRctDB.handler) ;
     DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
@@ -1656,6 +1689,7 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
                             sizeof(tab_sDestLocalDBsInfo[iIndex].psFileAvailability->pathname), 
                             "%s/%s", destInstallFolder, tab_sDestLocalDBsInfo[iIndex].filename) ;
             tab_sDestLocalDBsInfo[iIndex].psFileAvailability->handler = persComDbOpen(tab_sDestLocalDBsInfo[iIndex].psFileAvailability->pathname, true) ;
+            
             if(tab_sDestLocalDBsInfo[iIndex].psFileAvailability->handler >= 0)
             {
                 tab_sDestLocalDBsInfo[iIndex].psFileAvailability->bIsAvailable = true ;
@@ -1669,7 +1703,6 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
             DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));        
         }
     }
-
     /*---------------------------------------------------------------------------------------------------------
                                      get context for source folders        
      ---------------------------------------------------------------------------------------------------------*/
@@ -1692,18 +1725,32 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
         for(iIndex = 0 ; bEverythingOK && (iIndex < sizeof(tab_sSrcContextEntries)/sizeof(tab_sSrcContextEntries[0])) ; iIndex++)
         {
             (void)snprintf( tab_sSrcContextEntries[iIndex].psFileAvailability->pathname,
-                            sizeof(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname), 
+                            sizeof(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname),
                             "%s%s", srcInstallFolder, tab_sSrcContextEntries[iIndex].filename) ;
             if(0 <= persadmin_check_if_file_exists(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, tab_sSrcContextEntries[iIndex].bIsFolder))
             {
-                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = true ;  
+                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = true ;
             }
             else
             {
-                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = false ; 
+                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = false ;
                 if(tab_sSrcContextEntries[iIndex].bPresenceIsMandatory)
                 {
-                    bEverythingOK = false ;
+                    DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                     DLT_STRING(" - Folder with pathname: "), DLT_STRING( tab_sSrcContextEntries[iIndex].psFileAvailability->pathname ), DLT_STRING(" cannot be found! ") );
+
+                    if (0 <=  persadmin_create_folder( tab_sSrcContextEntries[iIndex].psFileAvailability->pathname))
+                    {
+                        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__),
+                         DLT_STRING(" - Empty folder has been created. Please be sure if it's ok!"));
+
+                        tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = true ;
+                    }
+                    else
+                    {
+                        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_ERROR, DLT_STRING(LT_HDR), DLT_STRING(__FUNCTION__), DLT_STRING("- Cannot create an empty folder."));
+                        bEverythingOK = false ;
+                    }
                 }
             }
             (void)snprintf(g_msg, sizeof(g_msg), "%s - %s <<%s>>", __FUNCTION__, 
@@ -1720,9 +1767,9 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
         {
             {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sRctFile */
                 PERSADM_CFG_RESOURCE_RCT_FILENAME,                                                                      PersAdminCfgFileType_RCT,               true},
-            {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sFactoryDefaultDataFile */
+            {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sFactoryDefaultDataFile */                
                 PERSADM_CFG_RESOURCE_ROOT_KEYDATA_FOLDER_NAME"/"PERSADM_CFG_RESOURCE_FACTORY_DEFAULT_KEYDATA_FILENAME,  PersAdminCfgFileType_Database,          true},
-            {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sConfigurableDefaultDataFile */
+            {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sConfigurableDefaultDataFile */                
                 PERSADM_CFG_RESOURCE_ROOT_KEYDATA_FOLDER_NAME"/"PERSADM_CFG_RESOURCE_CONFIG_KEYDEFAULT_DATA_FILENAME,   PersAdminCfgFileType_Database,          true},
             {false,  NIL,/* &psInstallFolderCtx_inout->sSrcContext.sInitialDataFile */
                 PERSADM_CFG_RESOURCE_ROOT_KEYDATA_FOLDER_NAME"/"PERSADM_CFG_RESOURCE_NON_DEFAULT_KEYDATA_FILENAME,      PersAdminCfgFileType_Database,          false},
@@ -1739,37 +1786,40 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
         for(iIndex = 0 ; bEverythingOK && (iIndex < sizeof(tab_sSrcContextEntries)/sizeof(tab_sSrcContextEntries[0])) ; iIndex++)
         {
             (void)snprintf( tab_sSrcContextEntries[iIndex].psFileAvailability->pathname,
-                            sizeof(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname), 
+                            sizeof(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname),
                             "%s/%s", srcInstallFolder, tab_sSrcContextEntries[iIndex].filename) ;
-            if(0 <= persadmin_check_if_file_exists(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, tab_sSrcContextEntries[iIndex].bIsFolder))
+
+            if(tab_sSrcContextEntries[iIndex].bPresenceIsMandatory)
             {
-                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = true ;  
-                tab_sSrcContextEntries[iIndex].psFileAvailability->handler = 
-                        persAdmCfgFileOpen(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, tab_sSrcContextEntries[iIndex].eCfgFileType) ;
+                if(0 > persadmin_check_if_file_exists(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, tab_sSrcContextEntries[iIndex].bIsFolder))
+                {
+                    pas_conf_createDefaultContentJsonFile(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, appName);
+                }
+
+                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = true ;
+                tab_sSrcContextEntries[iIndex].psFileAvailability->handler =
+                    persAdmCfgFileOpen(tab_sSrcContextEntries[iIndex].psFileAvailability->pathname, tab_sSrcContextEntries[iIndex].eCfgFileType) ;
+
                 if(tab_sSrcContextEntries[iIndex].psFileAvailability->handler < 0)
                 {
                     bEverythingOK = false ;
                 }
-                (void)snprintf(g_msg, sizeof(g_msg), "%s - persAdmCfgFileOpen(<%s>, %d) returned <%d>", 
+                (void)snprintf(g_msg, sizeof(g_msg), "%s - persAdmCfgFileOpen(<%s>, %d) returned <%d>",
                         __FUNCTION__, tab_sSrcContextEntries[iIndex].psFileAvailability->pathname,
                         tab_sSrcContextEntries[iIndex].eCfgFileType, tab_sSrcContextEntries[iIndex].psFileAvailability->handler) ;
-                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));  
+                DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
             }
             else
             {
-                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = false ; 
+                tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable = false ;
                 tab_sSrcContextEntries[iIndex].psFileAvailability->handler = -1 ;
-                if(tab_sSrcContextEntries[iIndex].bPresenceIsMandatory)
-                {
-                    bEverythingOK = false ;
-                }
             }
-            (void)snprintf(g_msg, sizeof(g_msg), "%s - %s <<%s>>", __FUNCTION__, 
+
+            (void)snprintf(g_msg, sizeof(g_msg), "%s - %s <<%s>>", __FUNCTION__,
                     tab_sSrcContextEntries[iIndex].psFileAvailability->bIsAvailable ? "Found" : "Not found",
                     tab_sSrcContextEntries[iIndex].filename) ;
             DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
         }
-    
     }
 
     /*---------------------------------------------------------------------------------------------------------
@@ -1783,10 +1833,10 @@ static bool_t pas_conf_getContextInstallFolder(constpstr_t destInstallFolder, co
                     __FUNCTION__, bEverythingOK ? "OK" : "FAILED") ;
             DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING(g_msg));
         }
-    }
-
+    }    
     return bEverythingOK ;
 }/*DG C8ISQP-ISQP Metric 10-SSW_Administrator_0001*/ /*DG C8ISQP-ISQP Metric 1-SSW_Administrator_0021*/ /*DG C8ISQP-ISQP Metric 6-SSW_Administrator_0022*/
+
 
 /**
  * \brief Close handlers, free dynamicaly allocated memory for the public/group/app's context

@@ -1,1 +1,0 @@
-gdbus-codegen --interface-prefix="org.genivi.persistence." --c-namespace="OipPersistence" --generate-c-code="PasModuleTestGen" OIPModuleTestPASCodeGeneration.xml

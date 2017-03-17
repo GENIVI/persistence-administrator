@@ -41,7 +41,6 @@
 #include "persComRct.h"
 
 #include "ssw_pers_admin_files_helper.h"
-#include "ssw_pers_admin_dbus.h"
 
 #include "persistence_admin_service.h"
 
@@ -1954,8 +1953,6 @@ int main(void)
 
     //sprintf(g_msg, "\n\n++++++++++ Test PAS  - FINISH ++++++++++++++++\n\n") ;
     DLT_LOG(testPersAdminDLTCtx, DLT_LOG_INFO, DLT_STRING(LT_HDR), DLT_STRING("++++++++++ Test PAS  - FINISH ++++++++++++++++"));
-    /* Init and run the main DBus loop */
-    persadmin_RunDBusMainLoop();
 
     return 1 ;
 }
