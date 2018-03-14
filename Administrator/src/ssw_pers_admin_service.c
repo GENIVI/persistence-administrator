@@ -480,15 +480,6 @@ static bool_t persadmin_ProcessRequest(persadmin_request_msg_s* psRequest, long*
     bool_t    bLockedMtx        = false;
     long result             = -1 ;
 
-    /* check if PAS is registered to NSM */
-    if(false == persadmin_IsRegisteredToNSM())
-    {
-        DLT_LOG(persAdminSvcDLTCtx, DLT_LOG_WARN, DLT_STRING("Cannot process request. Not registered to NSM yet..."));
-
-        bEverythingOK = false;
-    }
-
-
     /* check if a shutdown is in progress */
     if(true == bEverythingOK)
     {
