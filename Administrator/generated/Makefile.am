@@ -29,7 +29,7 @@ CLEANFILES    = NodeStateConsumer.c        \
 
 # Targets to create generated sources during the build
 NodeStateConsumer.c NodeStateConsumer.h: $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.Consumer.xml
-	gdbus-codegen --interface org.genivi.NodeStateManager. --c-namespace NodeState --generate-c-code NodeStateConsumer $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.Consumer.xml
+	gdbus-codegen --interface-prefix org.genivi.NodeStateManager. --c-namespace NodeState --generate-c-code NodeStateConsumer $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.Consumer.xml
 
 NodeStateLifecycleConsumer.c NodeStateLifecycleConsumer.h: $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.LifecycleConsumer.xml
-	gdbus-codegen --interface org.genivi.NodeStateManager.LifeCycle --c-namespace NodeStateLifeCycle --generate-c-code NodeStateLifecycleConsumer $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.LifecycleConsumer.xml
+	gdbus-codegen --interface-prefix org.genivi.NodeStateManager.LifeCycle --c-namespace NodeStateLifeCycle --generate-c-code NodeStateLifecycleConsumer $(nsmdbusinterfacesdir)/org.genivi.NodeStateManager.LifecycleConsumer.xml
