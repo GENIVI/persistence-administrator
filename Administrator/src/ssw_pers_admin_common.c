@@ -595,7 +595,7 @@ sint_t persadmin_compress(pstr_t compressTo, pstr_t compressFrom)
     }
 
     memset(pchParentPath, 0, sizeof(pchParentPath));
-    snprintf(pchParentPath, sizeof(pchParentPath), compressFrom);
+    snprintf(pchParentPath, sizeof(pchParentPath), "%s", compressFrom);
     pchStrPos = strrchr(pchParentPath, '/');
     if(NIL != pchStrPos)
     {
