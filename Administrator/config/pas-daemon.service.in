@@ -16,4 +16,4 @@ StartLimitBurst=3
 StartLimitAction=reboot
 
 [Install]
-WantedBy=oip-cpi-mandatory.target
+WantedBy=multi-user.target
